@@ -97,6 +97,7 @@ delta_data_final <- delta_data_final %>%
 ### GHQ & PSS Plots
 library(cowplot)
 
+
 # Extract relevant data from the cleaned dataset
 violin_data <- Stress_Masterfile_cleaned %>%
   filter(session %in% c("T0", "T1")) %>%
@@ -313,8 +314,8 @@ regression_summary_PSS$FDR_Bonferroni <- p.adjust(regression_summary_PSS$P_Value
 view(regression_summary_GHQ)
 view(regression_summary_PSS)
 
-# write.csv(regression_summary_GHQ, "HMZ_Publication/Regression_Summary_Table_GHQ_FDR.csv", row.names = FALSE)
-# write.csv(regression_summary_PSS, "HMZ_Publication/Regression_Summary_Table_PSS_FDR.csv", row.names = FALSE)
+#write.csv(regression_summary_GHQ, "HMZ_Publication/Regression_Summary_Table_GHQ_FDR.csv", row.names = FALSE)
+#write.csv(regression_summary_PSS, "HMZ_Publication/Regression_Summary_Table_PSS_FDR.csv", row.names = FALSE)
 
 
 
@@ -360,15 +361,15 @@ heatmap_data <- heatmap_data %>%
 heatmap_plot <- ggplot(heatmap_data, aes(x = Dependent_Variable, y = Analyte, fill = Coefficient)) +
   geom_tile(color = "white") +
   scale_fill_gradient2(low = "#0014a8", mid = "#ebf5ff", high = "#e32636", midpoint = 0, name = "Regression Coefficient") +  
-  geom_text(aes(label = Significance), color = "black", size = 3, vjust = 0.75) +  # Lowered symbols
-  labs(title = "Regression Coefficients Heatmap", x = "Dependent Variable", y = "Analytes") +
+  geom_text(aes(label = Significance), color = "black", size = 5, vjust = 0.75) +  # Lowered symbols
+  labs(title = "Regression Coefficients Heatmap", x = "", y = "Analytes") +
   theme_minimal(base_size = 14) +
   theme(axis.text.y = element_text(size = 7, face = "bold", vjust = 0.5),
         axis.text.x = element_text(size = 14, face = "bold"),
         plot.title = element_text(size = 18, face = "bold"))
 
 # Save & display
-# ggsave("HMZ_Publication/Regression_Heatmap.png", plot = heatmap_plot, width = 8, height = 12, dpi = 300)
+ggsave("HMZ_Publication/Regression_Heatmap.png", plot = heatmap_plot, width = 8, height = 12, dpi = 300)
 print(heatmap_plot)
 
 
@@ -393,230 +394,108 @@ significant_results <- regression_summary_table %>%
          )) %>%
   select(Analyte, Dependent_Variable, Coefficient, P_Value, Significance)
 
- print(significant_results)
+print(significant_results)
 
 
 #### Regression Plots ####
+# Ensure analyte names match the format in delta_data_final
+significant_results <- significant_results %>%
+  mutate(Analyte_Clean = paste0("Delta_", gsub(" ", "_", Analyte)))  # Add "Delta_" prefix and replace spaces with "_"
+
+# Find which analytes exist in delta_data_final
+available_analytes <- intersect(significant_results$Analyte_Clean, colnames(delta_data_final))
+missing_analytes <- setdiff(significant_results$Analyte_Clean, colnames(delta_data_final))
+
+# Print results
+cat("\n✅ Available analytes for plotting:", length(available_analytes), "\n")
+print(available_analytes)
+
+cat("\n❌ Missing analytes (not found in delta_data_final):", length(missing_analytes), "\n")
+print(missing_analytes)
+
+ 
+##Loop
 
 library(ggplot2)
 library(dplyr)
 
-# Define correct column names
-dep_var_col <- "Delta_GHQ_total"
-analyte_col <- "Delta_Neutrophil_collagenase"
-
-# Extract relevant data
-plot_data <- delta_data_final %>%
-  select(Bio_ID, all_of(dep_var_col), all_of(analyte_col)) %>%
-  rename(GHQ = all_of(dep_var_col), Neutrophil_Collagenase = all_of(analyte_col))
-
-# Outlier removal: Keep values within 2 standard deviations
-plot_data <- plot_data %>%
-  filter(
-    GHQ >= (mean(GHQ, na.rm = TRUE) - 2 * sd(GHQ, na.rm = TRUE)) &
-      GHQ <= (mean(GHQ, na.rm = TRUE) + 2 * sd(GHQ, na.rm = TRUE)) &
-      Neutrophil_Collagenase >= (mean(Neutrophil_Collagenase, na.rm = TRUE) - 2 * sd(Neutrophil_Collagenase, na.rm = TRUE)) &
-      Neutrophil_Collagenase <= (mean(Neutrophil_Collagenase, na.rm = TRUE) + 2 * sd(Neutrophil_Collagenase, na.rm = TRUE))
-  )
-
-# Clean analyte name to match significant_results
-clean_analyte_name <- gsub("Delta_", "", analyte_col)  # Remove "Delta"
-clean_analyte_name <- gsub("_", " ", clean_analyte_name)  # Replace underscores with spaces
-clean_analyte_name <- gsub("\\.", " ", clean_analyte_name)  # Replace dots with spaces
-
-# Extract regression values from significant_results
-signif_result <- significant_results %>%
-  filter(Analyte == clean_analyte_name, Dependent_Variable == "GHQ")
-
-# Check if a match was found
-if (nrow(signif_result) == 0) {
-  stop("Error: No matching entry found in significant_results for ", clean_analyte_name, " vs. GHQ")
-}
-
-# Get values from the table
-n_subjects <- nrow(plot_data)  # Number of subjects after outlier removal
-beta_value <- round(signif_result$Coefficient, 3)  # Round beta to 3 decimals
-p_value <- signif_result$P_Value
-
-# Format p-value for display (avoid scientific notation)
-if (!is.na(p_value) && p_value < 0.001) {
-  p_value_text <- "p < 0.001"
-} else {
-  p_value_text <- paste0("p = ", round(p_value, 3))
-}
-
-# Create annotation text
-annotation_text <- paste0("N = ", n_subjects, 
-                          "\nβ = ", beta_value, 
-                          "\n", p_value_text)
-
-# Create scatter plot with updated aesthetics
-p <- ggplot(plot_data, aes(x = Neutrophil_Collagenase, y = GHQ)) +
-  geom_point(alpha = 0.9, size = 2, color = "#a00053") +  # Smaller black data points
-  geom_smooth(method = "lm", color = "#00a09d", linetype = "solid") +  # Blue regression line
-  annotate("text", x = min(plot_data$Neutrophil_Collagenase), 
-           y = max(plot_data$GHQ), label = annotation_text, 
-           hjust = 0, vjust = 1, size = 5, fontface = "bold") +  # Annotation box
-  labs(title = "Neutrophil Collagenase vs. GHQ",
-       x = "Neutrophil Collagenase",
-       y = "GHQ") +
-  theme_minimal(base_size = 16) +  # Larger text for readability
-  theme(plot.title = element_text(size = 18, face = "bold"),
-        axis.text = element_text(size = 14),
-        axis.title = element_text(size = 16))
-
-# Save & display plot
-#ggsave("HMZ_Publication/Neutrophil_Collagenase_vs_GHQ.png", plot = p, width = 6, height = 4, dpi = 300)
-print(p)
-
-
-#### Loop LR Plots ####
-
-library(ggplot2)
-library(dplyr)
-
-
-# Rename the columns to replace periods with underscores
-names(delta_data_final) <- gsub("\\.", "_", names(delta_data_final))
-
-# Check the new column names
-colnames(delta_data_final)
-
-
-# Print all available column names in delta_data_final 
-cat("\n🔍 Available columns in delta_data_final:\n", paste(names(delta_data_final), collapse = ", "), "\n\n")
-
-# Loop through all significant correlations
+# Loop through all significant analytes and generate plots
 for (i in 1:nrow(significant_results)) {
   
-  # Extract analyte and dependent variable
-  analyte_name <- significant_results$Analyte_Clean[i]  # Already cleaned
+  analyte_name <- significant_results$Analyte_Clean[i]
   dep_var <- significant_results$Dependent_Variable[i]
   
-  # Map GHQ and PSS back to their original column names
-  dep_var_col <- ifelse(dep_var == "GHQ", "Delta_GHQ_total", "Delta_PSS_Global_total")
-  
-  # Create multiple possible name formats
-  possible_names <- c(
-    gsub(" ", "_", analyte_name),    # Replace spaces with underscores
-    gsub(" ", ".", analyte_name),    # Replace spaces with dots
-    paste0("Delta_", analyte_name),  # Add "Delta_" prefix
-    paste0("Delta_", gsub(" ", "_", analyte_name)),  # Delta_ with underscores
-    paste0("Delta_", gsub(" ", ".", analyte_name))   # Delta_ with dots
-  )
-  
-  # Find matching column name in delta_data_final
-  analyte_col_match <- names(delta_data_final)[names(delta_data_final) %in% possible_names]
-  
-  # If no match found, print the problem and continue
-  if (length(analyte_col_match) != 1) {
-    cat("\n⚠ Skipping:", analyte_name, "- No unique match found in delta_data_final.\n")
-    cat("🔍 Searched for:", paste(possible_names, collapse = ", "), "\n")
-    cat("📝 Available analyte columns:\n", paste(names(delta_data_final), collapse = ", "), "\n")
+  # Check if analyte exists in delta_data_final
+  if (!(analyte_name %in% available_analytes)) {
+    cat("\n⚠ Skipping:", analyte_name, "→ Not found in `delta_data_final`.\n")
     next
   }
   
+  # Select correct dependent variable column
+  dep_var_col <- ifelse(dep_var == "GHQ", "Delta_GHQ_total", "Delta_PSS_Global_total")
+  
   # Extract relevant data
   plot_data <- delta_data_final %>%
-    select(Bio_ID, all_of(dep_var_col), all_of(analyte_col_match)) %>%
-    rename(Dependent_Var = all_of(dep_var_col), Analyte = all_of(analyte_col_match))
+    select(Bio_ID, all_of(dep_var_col), all_of(analyte_name)) %>%
+    rename(Dependent_Var = all_of(dep_var_col), Analyte = all_of(analyte_name))
   
-  # Outlier removal: Keep values within 2 standard deviations
+  # Remove outliers (values within 2 SD)
   plot_data <- plot_data %>%
     filter(
       Dependent_Var >= (mean(Dependent_Var, na.rm = TRUE) - 2 * sd(Dependent_Var, na.rm = TRUE)) &
         Dependent_Var <= (mean(Dependent_Var, na.rm = TRUE) + 2 * sd(Dependent_Var, na.rm = TRUE)) &
-        Analyte >= (mean(Analyte, na.rm = TRUE) - 2 * sd(Analyte, na.rm = TRUE)) &  # Fixed typo here
-        Analyte <= (mean(Analyte, na.rm = TRUE) + 2 * sd(Analyte, na.rm = TRUE))   # Fixed typo here
+        Analyte >= (mean(Analyte, na.rm = TRUE) - 2 * sd(Analyte, na.rm = TRUE)) &
+        Analyte <= (mean(Analyte, na.rm = TRUE) + 2 * sd(Analyte, na.rm = TRUE))
     )
   
-  # Extract values from significant_results
-  beta_value <- round(significant_results$Coefficient[i], 3)
-  p_value <- significant_results$P_Value[i]
-  n_subjects <- nrow(plot_data)
-  
-  # Format p-value for display
-  if (!is.na(p_value) && p_value < 0.001) {
-    p_value_text <- "p < 0.001"
-  } else {
-    p_value_text <- paste0("p = ", round(p_value, 3))
+  # Skip if no valid data points remain
+  if (nrow(plot_data) == 0) {
+    cat("\n⚠ Skipping:", analyte_name, "→ No valid data points after filtering!\n")
+    next
   }
   
-  # Create annotation text
-  annotation_text <- paste0("N = ", n_subjects, 
-                            "\nβ = ", beta_value, 
-                            "\n", p_value_text)
+  # Extract p-value
+  p_value <- significant_results$P_Value[i]
+  
+  # Format p-value
+  p_value_text <- ifelse(p_value < 0.001, "p < 0.001", paste0("p = ", round(p_value, 3)))
+  
+  # Position p-value at upper-right
+  annotation_x <- max(plot_data$Analyte, na.rm = TRUE) * 0.9  
+  annotation_y <- max(plot_data$Dependent_Var, na.rm = TRUE) * 0.9  
   
   # Create scatter plot
   p <- ggplot(plot_data, aes(x = Analyte, y = Dependent_Var)) +
-    geom_point(alpha = 0.7, size = 2, color = "black") +  # Smaller black data points
-    geom_smooth(method = "lm", color = "#1f78b4", linetype = "dashed") +  # Blue regression line
-    annotate("text", x = min(plot_data$Analyte, na.rm = TRUE), 
-             y = max(plot_data$Dependent_Var, na.rm = TRUE), label = annotation_text, 
-             hjust = 0, vjust = 1, size = 5, fontface = "bold") +  # Annotation box
-    labs(title = paste(analyte_name, "vs.", dep_var),
-         x = analyte_name,
-         y = dep_var) +
-    theme_minimal(base_size = 16) +  # Larger text for readability
-    theme(plot.title = element_text(size = 18, face = "bold"),
-          axis.text = element_text(size = 14),
-          axis.title = element_text(size = 16))
+    geom_point(alpha = 0.7, size = 1.5, color = "black") +  
+    geom_smooth(method = "lm", color = "red", linetype = "solid") +  
+    geom_segment(aes(x = min(Analyte, na.rm = TRUE), xend = max(Analyte, na.rm = TRUE), 
+                     y = min(Dependent_Var, na.rm = TRUE), yend = min(Dependent_Var, na.rm = TRUE)), color = "black") +  
+    geom_segment(aes(x = min(Analyte, na.rm = TRUE), xend = min(Analyte, na.rm = TRUE), 
+                     y = min(Dependent_Var, na.rm = TRUE), yend = max(Dependent_Var, na.rm = TRUE)), color = "black") +  
+    annotate("text", x = annotation_x, y = annotation_y, label = p_value_text, 
+             hjust = 1, vjust = 1, size = 6, fontface = "bold") +  
+    labs(
+      title = " ",  
+      x = bquote(.(significant_results$Analyte[i]) ~ "[" ~ Delta ~ T[1]-T[0] ~ "]"),  
+      y = bquote(.(dep_var) ~ "Total Score [" ~ Delta ~ T[1]-T[0] ~ "]")  # ✅ Updated y-axis title
+    ) +
+    theme_minimal(base_size = 16) +  
+    theme(
+      plot.title = element_blank(),  
+      axis.text = element_text(size = 14),  
+      axis.title = element_text(size = 16),  
+      panel.grid = element_blank()  
+    )
   
-  # Print the plot in RStudio
+  # Print the plot
   print(p)
   
-  # Define filename for saving
-  filename <- paste0("HMZ_Publication/", gsub(" ", "_", analyte_name), "_vs_", dep_var, ".png")
-  
-  # Save the plot
+  # Save plot
+  filename <- paste0("HMZ_Publication/", gsub(" ", "_", significant_results$Analyte[i]), "_vs_", dep_var, ".png")
   ggsave(filename, plot = p, width = 6, height = 4, dpi = 300)
   
-  # Print status message
   cat("\n✅ Saved plot:", filename, "\n")
-}
-
-
-
-
-####### Significant Analytes <0.1 #######
-
-library(dplyr)
-
-# Get analytes from the regression table (p < 0.1)
-significant_analytes_p0_1 <- c(
-  "Delta_Neutrophil_collagenase", "Delta_Growth_regulated_alpha_protein", 
-  "Delta_Gro_beta", "Delta_Indoleamine_2_3_dioxygenase_1", 
-  "Delta_Lipopolysaccharide_binding_protein", "Delta_Vascular_cell_adhesion_protein_1", 
-  "Delta_Annexin_A2", "Delta_C_X_C_motif_chemokine_10", 
-  "Delta_A_disintegrin_and_metalloproteinase_with_thrombospondin_motifs_9", 
-  "Delta_Interleukin_17A", "Delta_Prostaglandin_G_H_synthase_2", 
-  "Delta_Interleukin_4", "Delta_CD40_ligand", "Delta_Eotaxin", 
-  "Delta_Platelet_factor_4", "Delta_Fibroblast_growth_factor_22", 
-  "Delta_C_X_C_motif_chemokine_6", "Delta_Brain_derived_neurotrophic_factor", 
-  "Delta_A_disintegrin_and_metalloproteinase_with_thrombospondin_motifs_5", 
-  "Delta_Interferon_gamma", "Delta_Metalloproteinase_inhibitor_1", 
-  "Delta_iNOS", "Delta_Appetite_regulating_hormone", 
-  "Delta_Neutrophil_activating_peptide_2", "Delta_Gro_gamma", 
-  "Delta_P_selectin", "Delta_Indoleamine_2_3_dioxygenase_1", 
-  "Delta_von_Willebrand_factor"
-)
-
-# Find the matching column names in delta_data_final
-matching_columns_p0_1 <- names(delta_data_final)[names(delta_data_final) %in% significant_analytes_p0_1]
-
-# Select the relevant data (GHQ, PSS, covariates, and analyte delta values)
-significant_data_p0_1 <- delta_data_final %>%
-  select(Bio_ID, Delta_GHQ_total, Delta_PSS_Global_total, 
-         all_of(matching_columns_p0_1),  # Inserted analytes
-         age_T0, sex_numeric, BMI_T0_new, smoke_numeric, meds_numeric)
-
-# Save as CSV
-# write.csv(significant_data_p0_1, "HMZ_Publication/Significant_Correlates_p0_1.csv", row.names = FALSE)
-
-
-
-
-
+} 
 
 ### Circular Plot ####
 
@@ -628,37 +507,27 @@ library(scales)
 library(igraph)
 library(ggraph)
 
-# Define the proteins and their respective functional groups
+# Define the 15 significant proteins with their respective functional groups, matching delta_data_final
 protein_groups <- c(
-  "Neutrophil collagenase" = "inflammatory",
-  "Growth regulated alpha protein" = "inflammatory",
-  "Gro beta" = "inflammatory",
-  "Indoleamine 2 3 dioxygenase 1" = "inflammatory",
-  "Lipopolysaccharide binding protein" = "inflammatory",
-  "Vascular cell adhesion protein 1" = "vascular",
-  "Annexin A2" = "inflammatory",
-  "C X C motif chemokine 10" = "inflammatory",
-  "A disintegrin and metalloproteinase with thrombospondin motifs 9" = "metabolic",
-  "Interleukin 17A" = "inflammatory",
-  "Prostaglandin G H synthase 2" = "inflammatory",
-  "Interleukin 4" = "inflammatory",
-  "CD40 ligand" = "inflammatory",
-  "Eotaxin" = "inflammatory",
-  "Platelet factor 4" = "inflammatory",
-  "Fibroblast growth factor 22" = "metabolic",
-  "C X C motif chemokine 6" = "inflammatory",
-  "Brain derived neurotrophic factor" = "metabolic",
-  "A disintegrin and metalloproteinase with thrombospondin motifs 5" = "metabolic",
-  "Interferon gamma" = "inflammatory",
-  "Metalloproteinase inhibitor 1" = "inflammatory",
-  "iNOS" = "inflammatory",
-  "Appetite regulating hormone" = "metabolic",
-  "Neutrophil activating peptide 2" = "inflammatory",
-  "Gro gamma" = "inflammatory",
-  "P selectin" = "vascular",
-  "Indoleamine 2 3 dioxygenase 1" = "inflammatory",
-  "von Willebrand factor" = "vascular"
+  "Delta_Neutrophil_collagenase" = "inflammatory",
+  "Delta_Growth-regulated_alpha_protein" = "inflammatory",
+  "Delta_Gro-beta" = "inflammatory",
+  "Delta_Indoleamine_2,3-dioxygenase_1" = "inflammatory",
+  "Delta_Lipopolysaccharide-binding_protein" = "inflammatory",
+  "Delta_Vascular_cell_adhesion_protein_1" = "vascular",
+  "Delta_Annexin_A2" = "inflammatory",
+  "Delta_C-X-C_motif_chemokine_10" = "inflammatory",
+  "Delta_A_disintegrin_and_metalloproteinase_with_thrombospondin_motifs_9" = "metabolic",
+  "Delta_Interleukin-17A" = "inflammatory",
+  "Delta_Prostaglandin_G/H_synthase_2" = "inflammatory",
+  "Delta_Interleukin-4" = "inflammatory",
+  "Delta_CD40_ligand" = "inflammatory",
+  "Delta_Eotaxin" = "inflammatory",
+  "Delta_Platelet_factor_4" = "inflammatory"
 )
+
+# Print to verify
+print(protein_groups)
 
 # Define functional groups for analytes (Modify this based on your dataset)
 functional_groups <- c(
@@ -667,36 +536,230 @@ functional_groups <- c(
   "vascular" = "palegreen2"
 )
 
-# Create a data frame representing the relationships (edges) between analytes
-edges <- data.frame(
-  from = sample(names(protein_groups), length(protein_groups), replace = TRUE),  # Random connections (Modify if needed)
-  to = names(protein_groups),  # Target nodes
-  weight = runif(length(protein_groups), -0.5, 0.5)  # Random correlation values for example
+
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(ggcorrplot)
+
+# Step 1: Extract relevant protein data from delta_data_final
+selected_proteins <- names(protein_groups)  # Get the 15 significant proteins
+
+# Create a new dataset with only the selected proteins
+correlation_data <- delta_data_final %>%
+  select(all_of(selected_proteins))
+
+# Step 2: Rename proteins (remove "Delta" & "_")
+clean_names <- gsub("Delta_", "", selected_proteins)  # Remove "Delta_"
+clean_names <- gsub("_", " ", clean_names)  # Replace "_" with spaces
+colnames(correlation_data) <- clean_names  # Apply cleaned names
+
+# Step 3: Remove outliers (values outside ±2 SD)
+remove_outliers <- function(x) {
+  mean_x <- mean(x, na.rm = TRUE)
+  sd_x <- sd(x, na.rm = TRUE)
+  x[x < (mean_x - 2 * sd_x) | x > (mean_x + 2 * sd_x)] <- NA
+  return(x)
+}
+
+correlation_data <- correlation_data %>%
+  mutate(across(everything(), remove_outliers))
+
+# Step 4: Compute the correlation matrix
+correlation_matrix <- cor(correlation_data, use = "pairwise.complete.obs", method = "pearson")
+
+# Step 5: Generate the heatmap
+heatmap_plot <- ggcorrplot(correlation_matrix, 
+                           type = "lower", 
+                           lab = TRUE, 
+                           lab_size = 2, 
+                           colors = c("#0014a8", "#ebf5ff", "#e32636"),
+                           outline.color = "black",
+                           show.legend = TRUE) +
+  labs(title = "Correlation Matrix of Significant Proteins") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Print the heatmap
+print(heatmap_plot)
+
+# Save the heatmap
+#ggsave("HMZ_Publication/Protein_Correlation_Heatmap.png", plot = heatmap_plot, width = 10, height = 8, dpi = 300)
+
+
+### Network Plot
+
+
+# Load necessary libraries
+library(igraph)
+library(ggraph)
+library(tidyverse)
+
+# Convert correlation matrix to a tidy format
+correlation_long <- as.data.frame(as.table(correlation_matrix)) %>%
+  rename(Protein1 = Var1, Protein2 = Var2, Correlation = Freq) %>%
+  filter(Protein1 != Protein2)  # Remove self-loops
+
+# Set a correlation threshold (e.g., abs(r) > 0.3)
+threshold <- 0.25
+edges <- correlation_long %>%
+  filter(abs(Correlation) > threshold)
+
+# Create nodes data frame
+nodes <- data.frame(name = unique(c(edges$Protein1, edges$Protein2))) %>%
+  mutate(category = protein_groups[name])  # Assign functional groups
+
+# Define node colors based on category
+functional_colors <- c("inflammatory" = "skyblue1", "metabolic" = "orange1", "vascular" = "palegreen2")
+
+# Load stringr for text formatting
+library(stringr)
+
+# Modify the names manually with explicit line breaks (as done previously)
+nodes <- nodes %>%
+  mutate(label = case_when(
+    name == "Prostaglandin G/H synthase 2" ~ "Prostaglandin\nG/H synthase 2",
+    name == "A disintegrin and metalloproteinase with thrombospondin motifs 9" ~ "A disintegrin and metalloproteinase\nwith thrombospondin motifs 9",  # Explicit line breaks for three lines
+    name == "Vascular cell adhesion protein 1" ~ "Vascular cell\nadhesion protein 1",
+    name == "Lipopolysaccharide-binding protein" ~ "Lipopolysaccharide\nbinding protein",  # Now split into 2 lines
+    name == "Neutrophil collagenase" ~ "Neutrophil\ncollagenase",
+    name == "Growth-regulated alpha protein" ~ "Growth-regulated\nalpha protein",
+    name == "Platelet factor 4" ~ "Platelet\nfactor 4",
+    name == "C-X-C motif chemokine 10" ~ "C-X-C motif\nchemokine 10",
+    name == "Indoleamine 2,3-dioxygenase 1" ~ "Indoleamine 2,3-\ndioxygenase 1",
+    TRUE ~ name  # Keep other names unchanged
+  ))
+
+# Create igraph object
+network_graph <- graph_from_data_frame(d = edges, vertices = nodes, directed = FALSE)
+
+# Load stringr for text wrapping
+library(stringr)
+
+# Define the file path
+file_path <- "C:/Users/jasmi/OneDrive/Dokumente/SomaLogic/HMZ_Publication/Protein_Network_Plot.png"
+
+# Define the node sizes for each protein (Width, Height) with matching labels and adjustments
+node_sizes <- data.frame(
+  label = c("Interleukin-4", "Neutrophil collagenase", "Prostaglandin\nG/H synthase", 
+            "Vascular cell\nadhesion protein 1", "CD40 ligand", "Eotaxin", 
+            "Gro-beta", "Platelet\nfactor 4", "Indoleamine 2,3-\ndioxygenase 1", 
+            "C-X-C motif\nchemokine 10", "Lipopolysaccharide\nbinding protein", "Interleukin-17",
+            "Annexin A2", "Growth-regulated\nalpha protein", 
+            "A disintegrin and metalloproteinase\nwith thrombospondin motifs 9"), 
+  width = c(0.5, 0.6, 0.7, 0.8, 0.4, 0.3, 0.3, 0.4, 0.7, 0.6, 0.7, 0.8,
+            0.4, 0.6, 1.1),  # Increased width significantly for "A disintegran...", reduced for "Growth-regulated alpha protein" and increased for "Vascular cell adhesion protein"
+  height = c(0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 
+             0.2, 0.2, 0.2)  # Height for each protein (adjusted as requested)
 )
 
-# Create the graph object from the edges data frame
-network_graph <- graph_from_data_frame(edges, directed = FALSE)
-
-# Ensure all proteins in the network are assigned to a group
-V(network_graph)$category <- protein_groups[V(network_graph)$name]
-
-# Convert node categories to colors
-node_colors <- setNames(functional_groups[V(network_graph)$category], V(network_graph)$name)
-
-# Refined Circular Layout Visualization
-ggraph(network_graph, layout = "circle") +  
-  geom_edge_link(aes(edge_alpha = 0.7 * abs(weight), edge_width = weight, color = weight)) +
-  scale_edge_width_continuous(range = c(0.3, 1.2)) +  # Adjust edge thickness
-  scale_edge_color_gradient2(low = "blue", mid = "gray", high = "red", midpoint = 0) +  # Edge colors
-  geom_node_point(aes(color = category), size = 10, alpha = 0.9) +  # Node colors
-  scale_color_manual(values = functional_groups) +  
-  geom_node_text(aes(label = name), size = 6, fontface = "bold", color = "black") +  # Labels
+# Generate the network plot with customized node sizes for each protein
+network_plot <- ggraph(network_graph, layout = "fr") +  # Using Fruchterman-Reingold layout for more space
+  geom_edge_link(aes(edge_alpha = abs(Correlation), edge_width = abs(Correlation), edge_color = Correlation)) +
+  scale_edge_width_continuous(range = c(1, 5), guide = "none") +  
+  scale_edge_alpha_continuous(guide = "none") +  
+  scale_edge_color_gradient2(
+    low = "#0014a8", mid = "#ebf5ff", high = "#e32636", midpoint = 0,
+    guide = "none"
+  ) +  
+  # Create rectangular nodes with width and height adjusted for each protein and black borders
+  geom_tile(aes(x = x, y = y, 
+                width = ifelse(label %in% node_sizes$label, 
+                               node_sizes$width[match(label, node_sizes$label)], 0.5), 
+                height = ifelse(label %in% node_sizes$label, 
+                                node_sizes$height[match(label, node_sizes$label)], 0.2), 
+                fill = category), 
+            color = "black", # Add black border
+            show.legend = FALSE) +  
+  scale_fill_manual(values = functional_colors, guide = "none") +  
+  # Add protein names inside the nodes
+  geom_node_text(aes(x = x, y = y, label = label), size = 6, fontface = "bold", color = "black") +  
   theme_void() +
-  theme(legend.position = "right", 
-        legend.key.size = unit(0.1, "cm"),
-        legend.title = element_text(size = 16),
-        legend.text = element_text(size = 14))
+  theme(
+    plot.margin = margin(400, 400, 400, 400),  # Increase margins significantly for more space
+    legend.position = "none"  
+  )
 
-# Save the plot
-ggsave("Circular_Network_Plot.png", width = 10, height = 8, dpi = 300)
+# Print the adjusted plot with customized node sizes and black borders
+print(network_plot)
+
+# Save the plot with customized node sizes and black borders (larger figure)
+ggsave(file_path, plot = network_plot, width = 25, height = 25, dpi = 300, limitsize = FALSE)  # Save with larger figure and nodes
+
+
+###
+
+# Load necessary libraries
+library(igraph)
+library(ggraph)
+library(tidyverse)
+
+# Step 1: Add GHQ and PSS to the dataset
+selected_variables <- c(names(protein_groups), "Delta_GHQ_total", "Delta_PSS_Global_total")
+
+# Create dataset including GHQ and PSS
+correlation_data <- delta_data_final %>%
+  select(all_of(selected_variables))
+
+# Clean variable names
+clean_names <- gsub("Delta_", "", selected_variables)  
+clean_names <- gsub("_", " ", clean_names)  
+colnames(correlation_data) <- clean_names  
+
+# Remove outliers
+remove_outliers <- function(x) {
+  mean_x <- mean(x, na.rm = TRUE)
+  sd_x <- sd(x, na.rm = TRUE)
+  x[x < (mean_x - 2 * sd_x) | x > (mean_x + 2 * sd_x)] <- NA
+  return(x)
+}
+
+correlation_data <- correlation_data %>%
+  mutate(across(everything(), remove_outliers))
+
+# Step 2: Compute the correlation matrix and print it
+correlation_matrix <- cor(correlation_data, use = "pairwise.complete.obs", method = "pearson")
+
+# Print the correlation matrix
+print(correlation_matrix)
+
+# Step 3: Convert correlation matrix to a long format for network analysis
+correlation_long <- as.data.frame(as.table(correlation_matrix)) %>%
+  rename(Protein1 = Var1, Protein2 = Var2, Correlation = Freq) %>%
+  filter(Protein1 != Protein2)  
+
+# Step 4: Apply correlation threshold
+threshold <- 0.25
+edges <- correlation_long %>%
+  filter(abs(Correlation) > threshold)
+
+# Step 9: Generate the **final** corrected network plot with **extremely tiny** nodes
+network_plot <- ggraph(network_graph, layout = layout_matrix) +
+  geom_edge_link(aes(edge_alpha = abs(Correlation), edge_width = abs(Correlation), edge_color = Correlation)) +
+  scale_edge_width_continuous(range = c(0.5, 2), guide = "none") +  
+  scale_edge_alpha_continuous(guide = "none") +
+  scale_edge_color_gradient2(
+    low = "#0014a8", mid = "#ebf5ff", high = "#e32636", midpoint = 0,
+    guide = "none"
+  ) +
+  # **Reduce node size to be as small as possible**
+  geom_tile(aes(x = x, y = y, 
+                width = ifelse(name %in% c("GHQ", "PSS"), 0.5, 0.3),  # **Super tiny nodes**
+                height = ifelse(name %in% c("GHQ", "PSS"), 0.25, 0.2),  
+                fill = category),  
+            color = "black", show.legend = FALSE) +
+  scale_fill_manual(values = functional_colors, guide = "none") +
+  # **Keep text readable**
+  geom_node_text(aes(x = x, y = y, label = label), size = 3.5, fontface = "bold", color = "black") +  
+  theme_void() +
+  theme(
+    plot.margin = margin(50, 50, 50, 50),  
+    legend.position = "none"
+  )
+
+# Step 10: Save the **final** corrected plot
+ggsave("Protein_Network_Plot_Fixed.png", plot = network_plot, 
+       width = 18, height = 18, dpi = 500, limitsize = FALSE)
+
+
 
