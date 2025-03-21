@@ -487,11 +487,25 @@ residualized_data <- na.omit(residualized_data)
 # Compute Partial Pearson Correlation Matrix
 cor_matrix <- pcor(residualized_data, method = "pearson")$estimate
 
-# Format labels for plotting
-formatted_labels <- gsub("Delta_", "", colnames(cor_matrix))  # Remove "Delta_"
-formatted_labels <- gsub("_", " ", formatted_labels)  # Replace underscores
+# Format labels
+formatted_labels <- gsub("Delta_", "", colnames(cor_matrix))
+formatted_labels <- gsub("_", " ", formatted_labels)
 formatted_labels[formatted_labels == "GHQ total"] <- "GHQ"
 formatted_labels[formatted_labels == "PSS Global total"] <- "PSS"
+formatted_labels[formatted_labels == "Interleukin-4"] <- "IL-4"
+formatted_labels[formatted_labels == "Vascular cell adhesion protein 1"] <- "VCAM-1"
+formatted_labels[formatted_labels == "Platelet factor 4"] <- "CXCL4"
+formatted_labels[formatted_labels == "Neutrophil collagenase"] <- "MMP-8"
+formatted_labels[formatted_labels == "Growth-regulated alpha protein"] <- "CXCL1"
+formatted_labels[formatted_labels == "Lipopolysaccharide-binding protein"] <- "LBP"
+formatted_labels[formatted_labels == "Gro-beta"] <- "CXCL2"
+formatted_labels[formatted_labels == "A disintegrin and metalloproteinase with thrombospondin motifs 9"] <- "ADAMTS9"
+formatted_labels[formatted_labels == "Interleukin-17A"] <- "IL-17A"
+formatted_labels[formatted_labels == "CD40 ligand"] <- "CD40L"
+formatted_labels[formatted_labels == "Prostaglandin G/H synthase 2"] <- "PTGS2"
+formatted_labels[formatted_labels == "C-X-C motif chemokine 10"] <- "CXCL10"
+formatted_labels[formatted_labels == "Annexin A2"] <- "ANXA2"
+formatted_labels[formatted_labels == "Indoleamine 2,3-dioxygenase 1"] <- "IDO-1"
 
 # Set custom edge colors: red for positive, blue for negative
 edge_colors <- ifelse(cor_matrix > 0, "red", 
@@ -564,6 +578,20 @@ formatted_labels <- gsub("Delta_", "", colnames(cor_matrix))
 formatted_labels <- gsub("_", " ", formatted_labels)
 formatted_labels[formatted_labels == "GHQ total"] <- "GHQ"
 formatted_labels[formatted_labels == "PSS Global total"] <- "PSS"
+formatted_labels[formatted_labels == "Interleukin-4"] <- "IL-4"
+formatted_labels[formatted_labels == "Vascular cell adhesion protein 1"] <- "VCAM-1"
+formatted_labels[formatted_labels == "Platelet factor 4"] <- "CXCL4"
+formatted_labels[formatted_labels == "Neutrophil collagenase"] <- "MMP-8"
+formatted_labels[formatted_labels == "Growth-regulated alpha protein"] <- "CXCL1"
+formatted_labels[formatted_labels == "Lipopolysaccharide-binding protein"] <- "LBP"
+formatted_labels[formatted_labels == "Gro-beta"] <- "CXCL2"
+formatted_labels[formatted_labels == "A disintegrin and metalloproteinase with thrombospondin motifs 9"] <- "ADAMTS9"
+formatted_labels[formatted_labels == "Interleukin-17A"] <- "IL-17A"
+formatted_labels[formatted_labels == "CD40 ligand"] <- "CD40L"
+formatted_labels[formatted_labels == "Prostaglandin G/H synthase 2"] <- "PTGS2"
+formatted_labels[formatted_labels == "C-X-C motif chemokine 10"] <- "CXCL10"
+formatted_labels[formatted_labels == "Annexin A2"] <- "ANXA2"
+formatted_labels[formatted_labels == "Indoleamine 2,3-dioxygenase 1"] <- "IDO-1"
 
 # Define edge colors
 edge_colors <- ifelse(cor_matrix > 0, "red",
@@ -585,4 +613,82 @@ qgraph(cor_matrix,
        title = "Partial Pearson Network (Variable-wise Outlier Removal)",
        legend.cex = 1.2,
        edge.color = edge_colors)
+```
+
+
+```{r spearman-network-plot, echo=TRUE, message=FALSE, warning=FALSE}
+# Load libraries
+library(qgraph)
+library(ppcor)
+
+# Define variables
+selected_analytes <- significant_results$Analyte_Clean
+network_vars <- c(selected_analytes, "Delta_GHQ_total", "Delta_PSS_Global_total")
+covariate_vars <- c("age_T0", "BMI_T0_new", "smoke_numeric", "sex_numeric")
+
+# Extract data
+network_data <- delta_data_final[, names(delta_data_final) %in% network_vars]
+covariate_data <- delta_data_final[, names(delta_data_final) %in% covariate_vars]
+
+# Residualize data to adjust for covariates
+residualized_data <- network_data
+for (var in colnames(network_data)) {
+  formula <- as.formula(paste0("`", var, "` ~ ", paste(covariate_vars, collapse = " + ")))
+  residualized_data[[var]] <- resid(lm(formula, data = delta_data_final))
+}
+
+# Compute Spearman partial correlation
+cor_result <- pcor(residualized_data, method = "spearman")
+
+# Extract correlation matrix and ensure it's square and numeric
+cor_matrix <- as.matrix(cor_result$estimate)
+
+# Set custom edge colors
+edge_colors <- ifelse(cor_matrix > 0, "firebrick", "steelblue")
+
+# Clean labels for plot
+formatted_labels <- gsub("Delta_", "", colnames(cor_matrix))
+formatted_labels <- gsub("_", " ", formatted_labels)
+formatted_labels[formatted_labels == "GHQ total"] <- "GHQ"
+formatted_labels[formatted_labels == "PSS Global total"] <- "PSS"
+formatted_labels[formatted_labels == "Interleukin-4"] <- "IL-4"
+formatted_labels[formatted_labels == "Vascular cell adhesion protein 1"] <- "VCAM-1"
+formatted_labels[formatted_labels == "Platelet factor 4"] <- "CXCL4"
+formatted_labels[formatted_labels == "Neutrophil collagenase"] <- "MMP-8"
+formatted_labels[formatted_labels == "Growth-regulated alpha protein"] <- "CXCL1"
+formatted_labels[formatted_labels == "Lipopolysaccharide-binding protein"] <- "LBP"
+formatted_labels[formatted_labels == "Gro-beta"] <- "CXCL2"
+formatted_labels[formatted_labels == "A disintegrin and metalloproteinase with thrombospondin motifs 9"] <- "ADAMTS9"
+formatted_labels[formatted_labels == "Interleukin-17A"] <- "IL-17A"
+formatted_labels[formatted_labels == "CD40 ligand"] <- "CD40L"
+formatted_labels[formatted_labels == "Prostaglandin G/H synthase 2"] <- "PTGS2"
+formatted_labels[formatted_labels == "C-X-C motif chemokine 10"] <- "CXCL10"
+formatted_labels[formatted_labels == "Annexin A2"] <- "ANXA2"
+formatted_labels[formatted_labels == "Indoleamine 2,3-dioxygenase 1"] <- "IDO-1"
+
+# Plot the network with increased node spacing
+qgraph(cor_matrix,
+       layout = "spring",
+       layout.par = list(repulse.rad = 20), # directly sets radius of repulsion; default ~10
+       # repulsion = 1.4,
+       theme = "colorblind",
+       labels = formatted_labels,
+       label.cex = 1.2,
+       color = "skyblue",
+       border.width = 1.2,
+       border.color = "grey40",
+       minimum = 0.15,
+       cut = 0.3,
+       vsize = 7,                             
+       esize = 18,
+       # edge.labels = TRUE,
+       edge.label.cex = 1.0,
+       edge.label.bg = "white",
+       edge.label.position = 0.5,             
+       edge.label.margin = 0.01,              
+       edge.color = edge_colors,
+       title = "",
+       legend.cex = 1.2
+)
+
 ```
