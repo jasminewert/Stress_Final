@@ -116,14 +116,14 @@ delta_data_final <- delta_data_filtered
 ```{r prepare-covariates}
 covariates <- Stress_Masterfile_filtered %>%
   filter(session == "T0") %>%
-  select(Bio_ID, age_T0, sex_T0, BMI_T0_new, smoke, meds) %>%
+  dplyr::select(Bio_ID, age_T0, sex_T0, BMI_T0_new, smoke, meds) %>%
   mutate(
     age_T0 = as.numeric(age_T0),
     sex_numeric = ifelse(sex_T0 == "male", 0, ifelse(sex_T0 == "female", 1, NA)),
     smoke_numeric = ifelse(smoke == "yes", 1, ifelse(smoke == "no", 0, NA)),
     meds_numeric = ifelse(meds == "yes", 1, ifelse(meds == "no", 0, NA))
   ) %>%
-  select(Bio_ID, age_T0, sex_numeric, BMI_T0_new, smoke_numeric, meds_numeric)
+  dplyr::select(Bio_ID, age_T0, sex_numeric, BMI_T0_new, smoke_numeric, meds_numeric)
 
 delta_data_final <- delta_data_final %>%
   left_join(covariates, by = "Bio_ID")
@@ -139,15 +139,16 @@ delta_data_final <- delta_data_final %>%
 #write.csv(delta_data_final, "delta_data_final.csv", row.names = FALSE)
 ```
 
-## GHQ & PSS Violin Plots
+## GHQ & PSS Violin Plots with t-test
 
 ```{r ghq-pss-violin-plots, message=FALSE, warning=FALSE}
 library(cowplot)
+library(ggpubr)
 
 # Extract relevant data
 violin_data <- Stress_Masterfile_cleaned %>%
   filter(session %in% c("T0", "T1")) %>%
-  select(Bio_ID, session, GHQ_total, PSS_Global_total) %>%
+  dplyr::select(Bio_ID, session, GHQ_total, PSS_Global_total) %>%
   pivot_longer(cols = c(GHQ_total, PSS_Global_total), 
                names_to = "Measure", values_to = "Value") %>%
   rename(`Time Point` = session)
@@ -173,14 +174,26 @@ violin_data$Measure <- recode(violin_data$Measure,
 violin_data <- violin_data %>%
   mutate(`Time Point` = factor(`Time Point`, levels = c("T0", "T1")))
 
-# Custom violin plot function
+# Violin plot function with extended y-axis and properly placed, styled significance label
 plot_violin <- function(df, measure) {
-  ggplot(df %>% filter(Measure == measure), 
+  df_filtered <- df %>% filter(Measure == measure)
+  y_max <- max(df_filtered$Value, na.rm = TRUE)
+  y_lim_upper <- y_max + 10  # Extend the y-axis more generously
+
+  ggplot(df_filtered, 
          aes(x = `Time Point`, y = Value, fill = `Time Point`)) +
     geom_violin(trim = FALSE, alpha = 0.7, color = "black") +
     geom_boxplot(width = 0.1, outlier.shape = NA, color = "black", fill = "white") +
     geom_jitter(width = 0.15, alpha = 0.5, size = 1.2, color = "black") +
+    stat_compare_means(method = "t.test", 
+                       comparisons = list(c("T0", "T1")), 
+                       label = "p.signif", 
+                       tip.length = 0.01, 
+                       size = 7,  # Make the stars a bit thicker
+                       label.y = y_max + 7,
+                       bracket.size = 1) +  # Make the line thicker
     labs(x = "Time Point", y = measure) +
+    ylim(NA, y_lim_upper) +  # Dynamically extend y-axis
     theme_minimal(base_size = 16) +
     theme(
       panel.grid = element_blank(),
@@ -195,12 +208,16 @@ plot_violin <- function(df, measure) {
     scale_fill_manual(values = c("T0" = "#FF7070", "T1" = "#709BFF"), drop = FALSE)
 }
 
-# Generate and print both plots separately
+# Generate and print both plots with significance stars
 p1 <- plot_violin(violin_data, "GHQ Score Total")
 p2 <- plot_violin(violin_data, "PSS Score Total")
 
 print(p1)
 print(p2)
+
+# Save as PNG
+ggsave("GHQ_violin_plot.png", plot = p1, width = 6, height = 5, dpi = 300)
+ggsave("PSS_violin_plot.png", plot = p2, width = 6, height = 5, dpi = 300)
 ```
 
 ## Linear Regression Analysis: GHQ and PSS vs. Analytes
@@ -215,7 +232,7 @@ analyte_columns <- colnames(delta_data_final)[start_col:(start_col + 99)]
 # Function to run regression and return results
 run_regression <- function(dep_var, analyte_name) {
   regression_data <- delta_data_final %>%
-    select(Bio_ID, all_of(dep_var), all_of(analyte_name), age_T0, BMI_T0_new, smoke_numeric, sex_numeric) %>%
+    dplyr::select(Bio_ID, all_of(dep_var), all_of(analyte_name), age_T0, BMI_T0_new, smoke_numeric, sex_numeric) %>%
     rename(Dependent_Var = all_of(dep_var), Analyte = all_of(analyte_name), 
            Age = age_T0, BMI = BMI_T0_new, Smoke = smoke_numeric, Sex = sex_numeric)
   
@@ -272,9 +289,9 @@ regression_summary_PSS$FDR_Bonferroni <- p.adjust(regression_summary_PSS$P_Value
 ```{r combine-regression-tables}
 regression_summary_table <- bind_rows(
   regression_summary_GHQ %>% 
-    select(Analyte, Dependent_Variable, Coefficient, P_Value, N_Subjects, FDR_BH),
+    dplyr::select(Analyte, Dependent_Variable, Coefficient, P_Value, N_Subjects, FDR_BH),
   regression_summary_PSS %>% 
-    select(Analyte, Dependent_Variable, Coefficient, P_Value, N_Subjects, FDR_BH)
+    dplyr::select(Analyte, Dependent_Variable, Coefficient, P_Value, N_Subjects, FDR_BH)
 )
 
 # Rename FDR column for consistency
@@ -289,7 +306,7 @@ library(dplyr)
 
 # Prepare and clean data for heatmap
 heatmap_data <- regression_summary_table %>%
-  select(Analyte, Dependent_Variable, Coefficient, P_Value) %>%
+  dplyr::select(Analyte, Dependent_Variable, Coefficient, P_Value) %>%
   mutate(
     Significance = case_when(
       P_Value < 0.001 ~ "***",
@@ -359,7 +376,7 @@ significant_results <- regression_summary_table %>%
            P_Value < 0.05 ~ "*",
            TRUE ~ ""
          )) %>%
-  select(Analyte, Dependent_Variable, Coefficient, P_Value, Significance)
+  dplyr::select(Analyte, Dependent_Variable, Coefficient, P_Value, Significance)
 
 # Clean analyte names to match delta_data_final
 significant_results <- significant_results %>%
@@ -390,7 +407,7 @@ for (i in 1:nrow(significant_results)) {
   dep_var_col <- ifelse(dep_var == "GHQ", "Delta_GHQ_total", "Delta_PSS_Global_total")
 
   plot_data <- delta_data_final %>%
-    select(Bio_ID, all_of(dep_var_col), all_of(analyte_name)) %>%
+    dplyr::select(Bio_ID, all_of(dep_var_col), all_of(analyte_name)) %>%
     rename(Dependent_Var = all_of(dep_var_col), Analyte = all_of(analyte_name)) %>%
     filter(
       Dependent_Var >= (mean(Dependent_Var, na.rm = TRUE) - 2 * sd(Dependent_Var, na.rm = TRUE)) &
@@ -437,191 +454,16 @@ for (i in 1:nrow(significant_results)) {
 ```
 
 
-## Network Analysis
 
-```{r network-analysis, echo=TRUE, message=FALSE, warning=FALSE}
+## Network Analysis with Per-Variable Outlier Removal
+
+```{r network-analysis-estimate, echo=TRUE, message=FALSE, warning=FALSE}
 # Load required libraries
 library(qgraph)
 library(bootnet)
-library(ppcor)
+library(dplyr)
 
-# Define Variables
-selected_analytes <- significant_results$Analyte_Clean  # List of 15 significant analytes
-network_vars <- c(selected_analytes, "Delta_GHQ_total", "Delta_PSS_Global_total")  # Excluding covariates
-covariate_vars <- c("age_T0", "BMI_T0_new", "smoke_numeric", "sex_numeric")  # Covariates
-
-# Extract Data
-network_data <- delta_data_final[, names(delta_data_final) %in% network_vars]
-covariate_data <- delta_data_final[, names(delta_data_final) %in% covariate_vars]
-
-# Residualize the data to control for covariates
-residualized_data <- network_data  # Copy data for modification
-
-for (var in network_vars) {
-  if (var != "Bio_ID") {  # Avoid modifying the Bio_ID column
-    formula <- as.formula(paste0("`", var, "` ~ ", paste(covariate_vars, collapse = " + ")))
-    residualized_data[[var]] <- resid(lm(formula, data = delta_data_final))
-  }
-}
-
-# Function to remove outliers (values > ±2 SD)
-remove_outliers <- function(data) {
-  for (col in names(data)) {
-    if (is.numeric(data[[col]])) {  # Only apply to numeric columns
-      mean_val <- mean(data[[col]], na.rm = TRUE)
-      sd_val <- sd(data[[col]], na.rm = TRUE)
-      # Set values outside mean ± 2*SD to NA
-      data[[col]][data[[col]] < (mean_val - 2 * sd_val) | 
-                  data[[col]] > (mean_val + 2 * sd_val)] <- NA
-    }
-  }
-  return(data)
-}
-
-# Apply outlier removal
-residualized_data <- remove_outliers(residualized_data)
-
-# Remove rows where any column has NA
-residualized_data <- na.omit(residualized_data)
-
-# Compute Partial Pearson Correlation Matrix
-cor_matrix <- pcor(residualized_data, method = "pearson")$estimate
-
-# Format labels
-formatted_labels <- gsub("Delta_", "", colnames(cor_matrix))
-formatted_labels <- gsub("_", " ", formatted_labels)
-formatted_labels[formatted_labels == "GHQ total"] <- "GHQ"
-formatted_labels[formatted_labels == "PSS Global total"] <- "PSS"
-formatted_labels[formatted_labels == "Interleukin-4"] <- "IL-4"
-formatted_labels[formatted_labels == "Vascular cell adhesion protein 1"] <- "VCAM-1"
-formatted_labels[formatted_labels == "Platelet factor 4"] <- "CXCL4"
-formatted_labels[formatted_labels == "Neutrophil collagenase"] <- "MMP-8"
-formatted_labels[formatted_labels == "Growth-regulated alpha protein"] <- "CXCL1"
-formatted_labels[formatted_labels == "Lipopolysaccharide-binding protein"] <- "LBP"
-formatted_labels[formatted_labels == "Gro-beta"] <- "CXCL2"
-formatted_labels[formatted_labels == "A disintegrin and metalloproteinase with thrombospondin motifs 9"] <- "ADAMTS9"
-formatted_labels[formatted_labels == "Interleukin-17A"] <- "IL-17A"
-formatted_labels[formatted_labels == "CD40 ligand"] <- "CD40L"
-formatted_labels[formatted_labels == "Prostaglandin G/H synthase 2"] <- "PTGS2"
-formatted_labels[formatted_labels == "C-X-C motif chemokine 10"] <- "CXCL10"
-formatted_labels[formatted_labels == "Annexin A2"] <- "ANXA2"
-formatted_labels[formatted_labels == "Indoleamine 2,3-dioxygenase 1"] <- "IDO-1"
-
-# Set custom edge colors: red for positive, blue for negative
-edge_colors <- ifelse(cor_matrix > 0, "red", 
-                      ifelse(cor_matrix < 0, "blue", "grey"))
-
-# Plot the network
-qgraph(cor_matrix,
-       layout = "spring",
-       theme = "colorblind",
-       labels = formatted_labels,
-       label.cex = 2,
-       color = "skyblue",
-       minimum = 0.1,
-       cut = 0.3,
-       vsize = 8,
-       esize = 20,
-       edge.labels = TRUE,
-       edge.label.cex = 1.2,
-       title = "Partial Pearson Network with Coefficients",
-       legend.cex = 1.2,
-       edge.color = edge_colors)  # Correct color mapping
-```
-### We removed outliers more than 2xstd from mean. We entirely removed the Bio_ID. This reduces the sample size from 82 to 48. Adapt the outlier removal by using different outlier removal strategies? 
-
-### Outlier Removal only for the respective Analyte
-
-```{r network-analysis-variablewise-outlier, echo=TRUE, message=FALSE, warning=FALSE}
-# Load required libraries
-library(qgraph)
-library(bootnet)
-library(ppcor)
-
-# Define Variables
-selected_analytes <- significant_results$Analyte_Clean  # List of 15 significant analytes
-network_vars <- c(selected_analytes, "Delta_GHQ_total", "Delta_PSS_Global_total")
-covariate_vars <- c("age_T0", "BMI_T0_new", "smoke_numeric", "sex_numeric")
-
-# Extract Data
-network_data <- delta_data_final[, names(delta_data_final) %in% network_vars]
-covariate_data <- delta_data_final[, names(delta_data_final) %in% covariate_vars]
-
-# Residualize the data to control for covariates
-residualized_data <- network_data  # Copy for modification
-
-for (var in network_vars) {
-  formula <- as.formula(paste0("`", var, "` ~ ", paste(covariate_vars, collapse = " + ")))
-  residualized_data[[var]] <- resid(lm(formula, data = delta_data_final))
-}
-
-# Function to remove outliers only for the specific variable (±2 SD)
-remove_outliers_variablewise <- function(data) {
-  for (col in names(data)) {
-    if (is.numeric(data[[col]])) {
-      m <- mean(data[[col]], na.rm = TRUE)
-      s <- sd(data[[col]], na.rm = TRUE)
-      data[[col]][data[[col]] < (m - 2 * s) | data[[col]] > (m + 2 * s)] <- NA
-    }
-  }
-  return(data)
-}
-
-# Apply outlier removal
-residualized_data <- remove_outliers_variablewise(residualized_data)
-
-# Compute partial correlations using pairwise complete observations
-cor_matrix <- cor(residualized_data, method = "pearson", use = "pairwise.complete.obs")
-
-# Format labels
-formatted_labels <- gsub("Delta_", "", colnames(cor_matrix))
-formatted_labels <- gsub("_", " ", formatted_labels)
-formatted_labels[formatted_labels == "GHQ total"] <- "GHQ"
-formatted_labels[formatted_labels == "PSS Global total"] <- "PSS"
-formatted_labels[formatted_labels == "Interleukin-4"] <- "IL-4"
-formatted_labels[formatted_labels == "Vascular cell adhesion protein 1"] <- "VCAM-1"
-formatted_labels[formatted_labels == "Platelet factor 4"] <- "CXCL4"
-formatted_labels[formatted_labels == "Neutrophil collagenase"] <- "MMP-8"
-formatted_labels[formatted_labels == "Growth-regulated alpha protein"] <- "CXCL1"
-formatted_labels[formatted_labels == "Lipopolysaccharide-binding protein"] <- "LBP"
-formatted_labels[formatted_labels == "Gro-beta"] <- "CXCL2"
-formatted_labels[formatted_labels == "A disintegrin and metalloproteinase with thrombospondin motifs 9"] <- "ADAMTS9"
-formatted_labels[formatted_labels == "Interleukin-17A"] <- "IL-17A"
-formatted_labels[formatted_labels == "CD40 ligand"] <- "CD40L"
-formatted_labels[formatted_labels == "Prostaglandin G/H synthase 2"] <- "PTGS2"
-formatted_labels[formatted_labels == "C-X-C motif chemokine 10"] <- "CXCL10"
-formatted_labels[formatted_labels == "Annexin A2"] <- "ANXA2"
-formatted_labels[formatted_labels == "Indoleamine 2,3-dioxygenase 1"] <- "IDO-1"
-
-# Define edge colors
-edge_colors <- ifelse(cor_matrix > 0, "red",
-                      ifelse(cor_matrix < 0, "blue", "grey"))
-
-# Plot the network
-qgraph(cor_matrix,
-       layout = "spring",
-       theme = "colorblind",
-       labels = formatted_labels,
-       label.cex = 2,
-       color = "skyblue",
-       minimum = 0.1,
-       cut = 0.3,
-       vsize = 8,
-       esize = 20,
-       edge.labels = TRUE,
-       edge.label.cex = 1.2,
-       title = "Partial Pearson Network (Variable-wise Outlier Removal)",
-       legend.cex = 1.2,
-       edge.color = edge_colors)
-```
-
-
-```{r spearman-network-plot, echo=TRUE, message=FALSE, warning=FALSE}
-# Load libraries
-library(qgraph)
-library(ppcor)
-
-# Define variables
+# Variables
 selected_analytes <- significant_results$Analyte_Clean
 network_vars <- c(selected_analytes, "Delta_GHQ_total", "Delta_PSS_Global_total")
 covariate_vars <- c("age_T0", "BMI_T0_new", "smoke_numeric", "sex_numeric")
@@ -630,65 +472,92 @@ covariate_vars <- c("age_T0", "BMI_T0_new", "smoke_numeric", "sex_numeric")
 network_data <- delta_data_final[, names(delta_data_final) %in% network_vars]
 covariate_data <- delta_data_final[, names(delta_data_final) %in% covariate_vars]
 
-# Residualize data to adjust for covariates
+# Residualize each variable on covariates
 residualized_data <- network_data
-for (var in colnames(network_data)) {
+for (var in network_vars) {
   formula <- as.formula(paste0("`", var, "` ~ ", paste(covariate_vars, collapse = " + ")))
   residualized_data[[var]] <- resid(lm(formula, data = delta_data_final))
 }
 
-# Compute Spearman partial correlation
-cor_result <- pcor(residualized_data, method = "spearman")
+# Outlier removal: only per variable (not whole Bio_ID)
+remove_outliers_per_variable <- function(data) {
+  cleaned_data <- data
+  for (col in names(cleaned_data)) {
+    if (is.numeric(cleaned_data[[col]])) {
+      m <- mean(cleaned_data[[col]], na.rm = TRUE)
+      s <- sd(cleaned_data[[col]], na.rm = TRUE)
+      outlier_mask <- cleaned_data[[col]] < (m - 2 * s) | cleaned_data[[col]] > (m + 2 * s)
+      cleaned_data[[col]][outlier_mask] <- NA
+    }
+  }
+  return(cleaned_data)
+}
 
-# Extract correlation matrix and ensure it's square and numeric
-cor_matrix <- as.matrix(cor_result$estimate)
+# Apply the function
+residualized_data_partial_outliers <- remove_outliers_per_variable(residualized_data)
 
-# Set custom edge colors
-edge_colors <- ifelse(cor_matrix > 0, "firebrick", "steelblue")
+# Use this cleaned dataset for network input
+network_input <- residualized_data_partial_outliers
 
-# Clean labels for plot
-formatted_labels <- gsub("Delta_", "", colnames(cor_matrix))
+# Estimate network (ggmModSelect with pairwise deletion)
+nw <- estimateNetwork(network_input, default = "ggmModSelect")
+
+# Format labels
+raw_labels <- colnames(nw$graph)
+formatted_labels <- gsub("^Delta_", "", raw_labels)
 formatted_labels <- gsub("_", " ", formatted_labels)
-formatted_labels[formatted_labels == "GHQ total"] <- "GHQ"
-formatted_labels[formatted_labels == "PSS Global total"] <- "PSS"
-formatted_labels[formatted_labels == "Interleukin-4"] <- "IL-4"
-formatted_labels[formatted_labels == "Vascular cell adhesion protein 1"] <- "VCAM-1"
-formatted_labels[formatted_labels == "Platelet factor 4"] <- "CXCL4"
-formatted_labels[formatted_labels == "Neutrophil collagenase"] <- "MMP-8"
-formatted_labels[formatted_labels == "Growth-regulated alpha protein"] <- "CXCL1"
-formatted_labels[formatted_labels == "Lipopolysaccharide-binding protein"] <- "LBP"
-formatted_labels[formatted_labels == "Gro-beta"] <- "CXCL2"
-formatted_labels[formatted_labels == "A disintegrin and metalloproteinase with thrombospondin motifs 9"] <- "ADAMTS9"
-formatted_labels[formatted_labels == "Interleukin-17A"] <- "IL-17A"
-formatted_labels[formatted_labels == "CD40 ligand"] <- "CD40L"
-formatted_labels[formatted_labels == "Prostaglandin G/H synthase 2"] <- "PTGS2"
-formatted_labels[formatted_labels == "C-X-C motif chemokine 10"] <- "CXCL10"
-formatted_labels[formatted_labels == "Annexin A2"] <- "ANXA2"
-formatted_labels[formatted_labels == "Indoleamine 2,3-dioxygenase 1"] <- "IDO-1"
 
-# Plot the network with increased node spacing
-qgraph(cor_matrix,
-       layout = "spring",
-       layout.par = list(repulse.rad = 20), # directly sets radius of repulsion; default ~10
-       # repulsion = 1.4,
-       theme = "colorblind",
-       labels = formatted_labels,
-       label.cex = 1.2,
-       color = "skyblue",
-       border.width = 1.2,
-       border.color = "grey40",
-       minimum = 0.15,
-       cut = 0.3,
-       vsize = 7,                             
-       esize = 18,
-       # edge.labels = TRUE,
-       edge.label.cex = 1.0,
-       edge.label.bg = "white",
-       edge.label.position = 0.5,             
-       edge.label.margin = 0.01,              
-       edge.color = edge_colors,
-       title = "",
-       legend.cex = 1.2
+# Replace long names with abbreviations
+abbrev_map <- c(
+  "GHQ total" = "GHQ",
+  "PSS Global total" = "PSS",
+  "Interleukin-4" = "IL-4",
+  "Vascular cell adhesion protein 1" = "VCAM-1",
+  "Platelet factor 4" = "CXCL4",
+  "Neutrophil collagenase" = "MMP-8",
+  "Growth-regulated alpha protein" = "CXCL1",
+  "Lipopolysaccharide-binding protein" = "LBP",
+  "Gro-beta" = "CXCL2",
+  "A disintegrin and metalloproteinase with thrombospondin motifs 9" = "ADAMTS9",
+  "Interleukin-17A" = "IL-17A",
+  "CD40 ligand" = "CD40L",
+  "Prostaglandin G/H synthase 2" = "PTGS2",
+  "C-X-C motif chemokine 10" = "CXCL10",
+  "Annexin A2" = "ANXA2",
+  "Indoleamine 2,3-dioxygenase 1" = "IDO-1"
 )
 
+formatted_labels <- ifelse(formatted_labels %in% names(abbrev_map),
+                           abbrev_map[formatted_labels],
+                           formatted_labels)
+
+# Define node colors and border
+node_colors <- rep("lightblue", length(formatted_labels))
+node_size <- 10
+node_border_width <- 2.5
+node_border_color <- "black"
+
+# Edge color: red = positive, blue = negative
+edge_colors <- ifelse(nw$graph > 0, "red",
+                      ifelse(nw$graph < 0, "blue", "gray"))
+
+# Define label font: 2 = bold, 1 = normal
+label_font <- ifelse(formatted_labels %in% c("PSS", "GHQ"), 1, 2)
+
+
+# Plot the network (make sure this is after the pdf() call)
+plot(nw,
+     layout = "spring",
+     title = "",
+     labels = formatted_labels,
+     label.cex = 1.2,
+     label.color = "black",
+     label.font = label_font,
+     edge.labels = FALSE,
+     edge.color = edge_colors,
+     node.color = node_colors,
+     vsize = node_size,
+     border.width = node_border_width,
+     border.color = node_border_color
+)
 ```
