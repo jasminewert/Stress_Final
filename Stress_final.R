@@ -8,33 +8,46 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-## Load Required Libraries
 
-```{r load-libraries}
+## 1. Load Required Libraries
+
+```{r load-libraries, echo=FALSE, message=FALSE, warning=FALSE}
+# Data Organization
 library(tidyverse)
-library(ggplot2)
+library(dplyr)
 library(readr)
+library(tidyr)
+
+# Plotting
+library(ggplot2)
+library(ggpubr)
+library(cowplot)
+library(purrr)
+
+# Network analysis
+library(qgraph)
+library(bootnet)
 ```
 
-## Import
+## 2. Import & Data Organization
 
-```{r load-data}
+### 2.1 Import
+
+```{r load-data, echo=FALSE, message=FALSE, warning=FALSE}
 Stress_Masterfile <- read_delim("Stress_Masterfile.csv", 
                                 delim = ";", escape_double = FALSE, trim_ws = TRUE)
-
-# View(Stress_Masterfile) 
 ```
 
-## Remove Rows with All NAs
+### 2.2 NA Removal
 
-```{r remove-na-rows}
+```{r remove-na-rows, results='hide', message=FALSE, warning=FALSE}
 Stress_Masterfile <- Stress_Masterfile %>%
   filter(rowSums(is.na(.)) != ncol(.))
 ```
 
-## Identify and Clean Analyte Columns
+### 2.3 Identify and Clean Analyte Columns
 
-```{r clean-analyte-columns}
+```{r clean-analyte-columns, results='hide', message=FALSE, warning=FALSE}
 # Identify analyte columns (adjust indices if needed)
 analyte_columns <- colnames(Stress_Masterfile)[62:161]
 
@@ -43,9 +56,9 @@ colnames(Stress_Masterfile) <- gsub(" ", "_", colnames(Stress_Masterfile))
 analyte_columns <- gsub(" ", "_", analyte_columns)
 ```
 
-## Keep Only Complete Bio_IDs
+### 2.4 Keep Only Complete Bio_IDs
 
-```{r complete-bio-ids}
+```{r complete-bio-ids, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 bio_ids_to_keep <- Stress_Masterfile %>%
   group_by(Bio_ID) %>%
   filter(if_all(all_of(analyte_columns), ~ !is.na(.))) %>%
@@ -60,9 +73,9 @@ cat("Removed Bio_IDs due to missing analyte values:\n")
 print(removed_bio_ids)
 ```
 
-## Filter for Participants with Both T0 and T1
+### 2.5 Filter for Participants with Both T0 and T1
 
-```{r filter-t0-t1}
+```{r filter-t0-t1, echo=TRUE, message=FALSE, warning=FALSE, results='markup'}
 Stress_Masterfile_filtered <- Stress_Masterfile_cleaned %>%
   group_by(Bio_ID) %>%
   filter(any(session == "T0" & !is.na(GHQ_total)) &
@@ -76,16 +89,16 @@ num_participants <- Stress_Masterfile_filtered %>%
 cat("Number of participants with both T0 and T1:", num_participants, "\n")
 ```
 
-## Recalculate BMI
+### 2.6 Recalculate BMI
 
-```{r recalculate-bmi}
+```{r recalculate-bmi, include=FALSE}
 Stress_Masterfile_filtered <- Stress_Masterfile_filtered %>%
   mutate(BMI_T0_new = as.numeric(Weight_T0) / (as.numeric(Height_T0) / 100)^2)
 ```
 
-## Calculate Delta Scores
+### 2.7 Calculate Delta Scores
 
-```{r calculate-deltas}
+```{r calculate-deltas, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
 delta_data <- Stress_Masterfile_filtered %>%
   group_by(Bio_ID) %>%
   summarize(across(c(GHQ_total, PSS_Global_total, STADI_Trait_total, WHO_total, 
@@ -98,9 +111,9 @@ delta_data <- Stress_Masterfile_filtered %>%
   ungroup()
 ```
 
-## Filter Participants Missing Analytes (Neurofilament Light Polypeptide)
+### 2.8 Filter Participants Missing Analytes (Neurofilament Light Polypeptide)
 
-```{r filter-nfl}
+```{r filter-nfl, echo=TRUE, message=FALSE, warning=FALSE}
 delta_data_filtered <- delta_data %>%
   filter(!is.na(Delta_Neurofilament_light_polypeptide))
 
@@ -111,9 +124,54 @@ print(removed_bio_ids)
 delta_data_final <- delta_data_filtered
 ```
 
-## Extract and Prepare Covariates
+## 3. Outlier Removal
 
-```{r prepare-covariates}
+```{r outlier-removal, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+# Replace values > 2 SD from mean with NA
+remove_outliers_sd <- function(x) {
+  if (all(is.na(x))) return(x)
+  mu <- mean(x, na.rm = TRUE)
+  sd_x <- sd(x, na.rm = TRUE)
+  outliers <- abs(x - mu) > 2 * sd_x
+  x[outliers] <- NA
+  return(x)
+}
+
+# Identify delta columns to clean
+delta_vars <- delta_data_final %>%
+  select(starts_with("Delta_")) %>%
+  colnames()
+
+# Store original for comparison
+delta_data_before <- delta_data_final
+
+# Replace outliers in-place
+delta_data_final <- delta_data_final %>%
+  mutate(across(all_of(delta_vars), remove_outliers_sd))
+
+# Count participants
+cat("Number of participants after outlier handling:\n")
+print(nrow(delta_data_final))
+
+# Count outliers replaced per variable
+outlier_counts <- map_int(delta_vars, function(var) {
+  sum(is.na(delta_data_final[[var]]) & !is.na(delta_data_before[[var]]))
+})
+
+outlier_summary <- data.frame(
+  Variable = delta_vars,
+  Outliers_Replaced = outlier_counts
+)
+
+# Print summary
+print(outlier_summary)
+```
+
+## 4. Extract and Prepare Covariates
+
+### 4.1 Covariate Extraction
+
+```{r prepare-covariates, echo=TRUE, message=FALSE, warning=FALSE}
 covariates <- Stress_Masterfile_filtered %>%
   filter(session == "T0") %>%
   dplyr::select(Bio_ID, age_T0, sex_T0, BMI_T0_new, smoke, meds) %>%
@@ -127,58 +185,52 @@ covariates <- Stress_Masterfile_filtered %>%
 
 delta_data_final <- delta_data_final %>%
   left_join(covariates, by = "Bio_ID")
-#View(delta_data_final)
 ```
 
-## Export Cleaned Datasets
+### 4.2 Export
 
-```{r export-csvs}
+```{r export-csvs, echo=FALSE, message=FALSE, warning=FALSE}
 #write.csv(Stress_Masterfile_cleaned, "Stress_Masterfile_cleaned.csv", row.names = FALSE)
 #write.csv(delta_data, "delta_data.csv", row.names = FALSE)
 #write.csv(delta_data_filtered, "delta_data_filtered.csv", row.names = FALSE)
 #write.csv(delta_data_final, "delta_data_final.csv", row.names = FALSE)
 ```
 
-## GHQ & PSS Violin Plots with t-test
+## 5. GHQ & PSS Violin Plots 
 
-```{r ghq-pss-violin-plots, message=FALSE, warning=FALSE}
-library(cowplot)
-library(ggpubr)
+```{r ghq-pss-violin-plots, message=FALSE, warning=FALSE, results='markup'}
+# Get Bio_IDs with valid GHQ and PSS delta 
+valid_ghq_ids <- delta_data_final %>%
+  filter(!is.na(Delta_GHQ_total)) %>%
+  pull(Bio_ID)
 
-# Extract relevant data
-violin_data <- Stress_Masterfile_cleaned %>%
-  filter(session %in% c("T0", "T1")) %>%
-  dplyr::select(Bio_ID, session, GHQ_total, PSS_Global_total) %>%
-  pivot_longer(cols = c(GHQ_total, PSS_Global_total), 
-               names_to = "Measure", values_to = "Value") %>%
-  rename(`Time Point` = session)
+valid_pss_ids <- delta_data_final %>%
+  filter(!is.na(Delta_PSS_Global_total)) %>%
+  pull(Bio_ID)
 
-# Function to remove outliers 
-remove_outliers <- function(df) {
-  df %>%
-    group_by(Measure, `Time Point`) %>%
-    mutate(Mean = mean(Value, na.rm = TRUE),
-           SD = sd(Value, na.rm = TRUE)) %>%
-    filter(Value >= (Mean - 2 * SD) & Value <= (Mean + 2 * SD)) %>%
-    ungroup()
-}
+# Filter original masterfile for those participants
+ghq_data <- Stress_Masterfile_cleaned %>%
+  filter(Bio_ID %in% valid_ghq_ids & session %in% c("T0", "T1")) %>%
+  dplyr::select(Bio_ID, session, GHQ_total) %>%
+  mutate(Measure = "GHQ Score Total", Value = GHQ_total) %>%
+  dplyr::select(-GHQ_total)
 
-# Apply outlier removal
-violin_data <- remove_outliers(violin_data)
+pss_data <- Stress_Masterfile_cleaned %>%
+  filter(Bio_ID %in% valid_pss_ids & session %in% c("T0", "T1")) %>%
+  dplyr::select(Bio_ID, session, PSS_Global_total) %>%
+  mutate(Measure = "PSS Score Total", Value = PSS_Global_total) %>%
+  dplyr::select(-PSS_Global_total)
 
-# Clean factor names
-violin_data$Measure <- recode(violin_data$Measure, 
-                              "GHQ_total" = "GHQ Score Total",
-                              "PSS_Global_total" = "PSS Score Total")
-
-violin_data <- violin_data %>%
+# Combine into one dataframe
+violin_data <- bind_rows(ghq_data, pss_data) %>%
+  rename(`Time Point` = session) %>%
   mutate(`Time Point` = factor(`Time Point`, levels = c("T0", "T1")))
 
-# Violin plot function with extended y-axis and properly placed, styled significance label
+# Violin plot function (with paired t-test)
 plot_violin <- function(df, measure) {
   df_filtered <- df %>% filter(Measure == measure)
   y_max <- max(df_filtered$Value, na.rm = TRUE)
-  y_lim_upper <- y_max + 10  # Extend the y-axis more generously
+  y_lim_upper <- y_max + 10
 
   ggplot(df_filtered, 
          aes(x = `Time Point`, y = Value, fill = `Time Point`)) +
@@ -188,12 +240,13 @@ plot_violin <- function(df, measure) {
     stat_compare_means(method = "t.test", 
                        comparisons = list(c("T0", "T1")), 
                        label = "p.signif", 
+                       paired = TRUE,         # <--- Paired t-test added here
                        tip.length = 0.01, 
-                       size = 7,  # Make the stars a bit thicker
-                       label.y = y_max + 7,
-                       bracket.size = 1) +  # Make the line thicker
+                       size = 7,
+                       label.y = y_max + 6,
+                       bracket.size = 1) +
     labs(x = "Time Point", y = measure) +
-    ylim(NA, y_lim_upper) +  # Dynamically extend y-axis
+    ylim(NA, y_lim_upper) +
     theme_minimal(base_size = 16) +
     theme(
       panel.grid = element_blank(),
@@ -208,23 +261,19 @@ plot_violin <- function(df, measure) {
     scale_fill_manual(values = c("T0" = "#FF7070", "T1" = "#709BFF"), drop = FALSE)
 }
 
-# Generate and print both plots with significance stars
+# Plot
 p1 <- plot_violin(violin_data, "GHQ Score Total")
 p2 <- plot_violin(violin_data, "PSS Score Total")
 
 print(p1)
 print(p2)
-
-# Save as PNG
-ggsave("GHQ_violin_plot.png", plot = p1, width = 6, height = 5, dpi = 300)
-ggsave("PSS_violin_plot.png", plot = p2, width = 6, height = 5, dpi = 300)
 ```
 
-## Linear Regression Analysis: GHQ and PSS vs. Analytes
+## 6. Linear Regression Analysis: GHQ and PSS vs. Analytes
 
-```{r linear-regression-ghq-pss, message=FALSE, warning=FALSE}
-library(dplyr)
+### 6.1 Run Regression
 
+```{r linear-regression, echo=TRUE, message=FALSE, warning=FALSE, results='markup'}
 # Identify analyte columns (starting from Neurofilament)
 start_col <- which(colnames(delta_data_final) == "Delta_Neurofilament_light_polypeptide")
 analyte_columns <- colnames(delta_data_final)[start_col:(start_col + 99)]
@@ -234,22 +283,14 @@ run_regression <- function(dep_var, analyte_name) {
   regression_data <- delta_data_final %>%
     dplyr::select(Bio_ID, all_of(dep_var), all_of(analyte_name), age_T0, BMI_T0_new, smoke_numeric, sex_numeric) %>%
     rename(Dependent_Var = all_of(dep_var), Analyte = all_of(analyte_name), 
-           Age = age_T0, BMI = BMI_T0_new, Smoke = smoke_numeric, Sex = sex_numeric)
-  
-  # Outlier removal: 2 SD
-  regression_data_clean <- regression_data %>%
-    filter(
-      Dependent_Var >= (mean(Dependent_Var, na.rm = TRUE) - 2 * sd(Dependent_Var, na.rm = TRUE)) &
-      Dependent_Var <= (mean(Dependent_Var, na.rm = TRUE) + 2 * sd(Dependent_Var, na.rm = TRUE)) &
-      Analyte >= (mean(Analyte, na.rm = TRUE) - 2 * sd(Analyte, na.rm = TRUE)) &
-      Analyte <= (mean(Analyte, na.rm = TRUE) + 2 * sd(Analyte, na.rm = TRUE))
-    )
-  
-  model <- lm(Dependent_Var ~ Analyte + Age + BMI + Smoke + Sex, data = regression_data_clean)
+           Age = age_T0, BMI = BMI_T0_new, Smoke = smoke_numeric, Sex = sex_numeric) %>%
+    drop_na()
+
+  model <- lm(Dependent_Var ~ Analyte + Age + BMI + Smoke + Sex, data = regression_data)
   
   coef_value <- summary(model)$coefficients["Analyte", "Estimate"]
   p_value <- summary(model)$coefficients["Analyte", "Pr(>|t|)"]
-  n_subjects <- nrow(regression_data_clean)
+  n_subjects <- nrow(regression_data)
   
   data.frame(
     Analyte = analyte_name,
@@ -275,18 +316,11 @@ regression_summary_GHQ$FDR_Bonferroni <- p.adjust(regression_summary_GHQ$P_Value
 
 regression_summary_PSS$FDR_BH <- p.adjust(regression_summary_PSS$P_Value, method = "BH")
 regression_summary_PSS$FDR_Bonferroni <- p.adjust(regression_summary_PSS$P_Value, method = "bonferroni")
-
-# view(regression_summary_GHQ)
-# view(regression_summary_PSS)
-
-# Export
-# write.csv(regression_summary_GHQ, "HMZ_Publication/Regression_Summary_Table_GHQ_FDR.csv", row.names = FALSE)
-# write.csv(regression_summary_PSS, "HMZ_Publication/Regression_Summary_Table_PSS_FDR.csv", row.names = FALSE)
 ```
 
-## Combine GHQ and PSS Regression Results
+### 6.2 Combine GHQ and PSS Regression Results
 
-```{r combine-regression-tables}
+```{r combine-regression-tables, echo=FALSE, message=FALSE, warning=FALSE}
 regression_summary_table <- bind_rows(
   regression_summary_GHQ %>% 
     dplyr::select(Analyte, Dependent_Variable, Coefficient, P_Value, N_Subjects, FDR_BH),
@@ -298,12 +332,9 @@ regression_summary_table <- bind_rows(
 colnames(regression_summary_table)[colnames(regression_summary_table) == "FDR_BH"] <- "FDR_P_Value"
 ```
 
-## Heatmap of Regression Coefficients
+## 7. Heatmap of Regression Coefficients
 
-```{r regression-heatmap-cleaned, message=FALSE, warning=FALSE}
-library(ggplot2)
-library(dplyr)
-
+```{r regression-heatmap, echo=TRUE message=FALSE, warning=FALSE, results='markup'}
 # Prepare and clean data for heatmap
 heatmap_data <- regression_summary_table %>%
   dplyr::select(Analyte, Dependent_Variable, Coefficient, P_Value) %>%
@@ -349,58 +380,47 @@ heatmap_plot <- ggplot(heatmap_data, aes(x = Dependent_Variable, y = Analyte, fi
         axis.text.x = element_text(size = 14, face = "bold"),
         plot.title = element_text(size = 18, face = "bold"))
 
-# Save and display
-ggsave("HMZ_Publication/Regression_Heatmap.png", plot = heatmap_plot, width = 8, height = 12, dpi = 300)
+# display
 print(heatmap_plot)
 ```
-## Significant Results and Inline Regression Plots
 
-```{r significant-results-inline, echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, fig.height=4}
-library(ggplot2)
-library(dplyr)
+## 8. Significant Results and Regression Plots
 
-#### Significant Results ####
-
-# Extract significant correlations (p < 0.05)
+```{r significant-results-inline, echo=TRUE, message=FALSE, warning=FALSE, results='markup', fig.width=6, fig.height=4}
+# Extract significant correlations 
 significant_results <- regression_summary_table %>%
   filter(P_Value < 0.05) %>%
-  mutate(Analyte = gsub("Delta_", "", Analyte),
-         Analyte = gsub("_", " ", Analyte),
-         Analyte = gsub("\\.", " ", Analyte),
-         Dependent_Variable = recode(Dependent_Variable,
-                                     "Delta_GHQ_total" = "GHQ",
-                                     "Delta_PSS_Global_total" = "PSS"),
-         Significance = case_when(
-           P_Value < 0.001 ~ "***",
-           P_Value < 0.01 ~ "**",
-           P_Value < 0.05 ~ "*",
-           TRUE ~ ""
-         )) %>%
+  mutate(
+    Analyte = gsub("Delta_", "", Analyte),
+    Analyte = gsub("_", " ", Analyte),
+    Analyte = gsub("\\.", " ", Analyte),
+    Dependent_Variable = recode(
+      Dependent_Variable,
+      "Delta_GHQ_total" = "GHQ",
+      "Delta_PSS_Global_total" = "PSS"
+    ),
+    Significance = case_when(
+      P_Value < 0.001 ~ "***",
+      P_Value < 0.01 ~ "**",
+      P_Value < 0.05 ~ "*",
+      TRUE ~ ""
+    )
+  ) %>%
   dplyr::select(Analyte, Dependent_Variable, Coefficient, P_Value, Significance)
 
 # Clean analyte names to match delta_data_final
 significant_results <- significant_results %>%
   mutate(Analyte_Clean = paste0("Delta_", gsub(" ", "_", Analyte)))
 
-# Identify available analytes
-available_analytes <- intersect(significant_results$Analyte_Clean, colnames(delta_data_final))
-missing_analytes <- setdiff(significant_results$Analyte_Clean, colnames(delta_data_final))
-
-cat("\n✅ Available analytes for plotting:", length(available_analytes), "\n")
-print(available_analytes)
-
-cat("\n❌ Missing analytes (not found in delta_data_final):", length(missing_analytes), "\n")
-print(missing_analytes)
-
-#### Inline Plots ####
-
+# Plotting without outlier filtering
 for (i in 1:nrow(significant_results)) {
 
   analyte_name <- significant_results$Analyte_Clean[i]
   dep_var <- significant_results$Dependent_Variable[i]
 
-  if (!(analyte_name %in% available_analytes)) {
-    cat("\n⚠ Skipping:", analyte_name, "→ Not found in `delta_data_final`.\n")
+  # Check if the analyte exists in the data
+  if (!(analyte_name %in% names(delta_data_final))) {
+    cat("\n Skipping:", analyte_name, "→ Not found in `delta_data_final`.\n")
     next
   }
 
@@ -408,16 +428,10 @@ for (i in 1:nrow(significant_results)) {
 
   plot_data <- delta_data_final %>%
     dplyr::select(Bio_ID, all_of(dep_var_col), all_of(analyte_name)) %>%
-    rename(Dependent_Var = all_of(dep_var_col), Analyte = all_of(analyte_name)) %>%
-    filter(
-      Dependent_Var >= (mean(Dependent_Var, na.rm = TRUE) - 2 * sd(Dependent_Var, na.rm = TRUE)) &
-      Dependent_Var <= (mean(Dependent_Var, na.rm = TRUE) + 2 * sd(Dependent_Var, na.rm = TRUE)) &
-      Analyte >= (mean(Analyte, na.rm = TRUE) - 2 * sd(Analyte, na.rm = TRUE)) &
-      Analyte <= (mean(Analyte, na.rm = TRUE) + 2 * sd(Analyte, na.rm = TRUE))
-    )
+    rename(Dependent_Var = all_of(dep_var_col), Analyte = all_of(analyte_name))
 
   if (nrow(plot_data) == 0) {
-    cat("\n⚠ Skipping:", analyte_name, "→ No valid data points after filtering!\n")
+    cat("\n Skipping:", analyte_name, "→ No valid data points!\n")
     next
   }
 
@@ -448,21 +462,15 @@ for (i in 1:nrow(significant_results)) {
       axis.title = element_text(size = 16),
       panel.grid = element_blank()
     )
-  
+
   print(p)
 }
 ```
 
 
+## 9. Network Analysis
 
-## Network Analysis with Per-Variable Outlier Removal
-
-```{r network-analysis-estimate, echo=TRUE, message=FALSE, warning=FALSE}
-# Load required libraries
-library(qgraph)
-library(bootnet)
-library(dplyr)
-
+```{r network-analysis-estimate, echo=TRUE, message=FALSE, warning=FALSE, results='markup'}
 # Variables
 selected_analytes <- significant_results$Analyte_Clean
 network_vars <- c(selected_analytes, "Delta_GHQ_total", "Delta_PSS_Global_total")
@@ -474,32 +482,21 @@ covariate_data <- delta_data_final[, names(delta_data_final) %in% covariate_vars
 
 # Residualize each variable on covariates
 residualized_data <- network_data
+
 for (var in network_vars) {
   formula <- as.formula(paste0("`", var, "` ~ ", paste(covariate_vars, collapse = " + ")))
-  residualized_data[[var]] <- resid(lm(formula, data = delta_data_final))
+  
+  model_data <- delta_data_final[, c(var, covariate_vars)]
+  model <- lm(formula, data = model_data, na.action = na.exclude)
+  
+  # Keep full-length residuals
+  residualized_data[[var]] <- resid(model)
 }
 
-# Outlier removal: only per variable (not whole Bio_ID)
-remove_outliers_per_variable <- function(data) {
-  cleaned_data <- data
-  for (col in names(cleaned_data)) {
-    if (is.numeric(cleaned_data[[col]])) {
-      m <- mean(cleaned_data[[col]], na.rm = TRUE)
-      s <- sd(cleaned_data[[col]], na.rm = TRUE)
-      outlier_mask <- cleaned_data[[col]] < (m - 2 * s) | cleaned_data[[col]] > (m + 2 * s)
-      cleaned_data[[col]][outlier_mask] <- NA
-    }
-  }
-  return(cleaned_data)
-}
+# Use residualized data directly 
+network_input <- residualized_data
 
-# Apply the function
-residualized_data_partial_outliers <- remove_outliers_per_variable(residualized_data)
-
-# Use this cleaned dataset for network input
-network_input <- residualized_data_partial_outliers
-
-# Estimate network (ggmModSelect with pairwise deletion)
+# Estimate network 
 nw <- estimateNetwork(network_input, default = "ggmModSelect")
 
 # Format labels
@@ -531,7 +528,7 @@ formatted_labels <- ifelse(formatted_labels %in% names(abbrev_map),
                            abbrev_map[formatted_labels],
                            formatted_labels)
 
-# Define node colors and border
+# Define node colors 
 node_colors <- rep("lightblue", length(formatted_labels))
 node_size <- 10
 node_border_width <- 2.5
@@ -541,11 +538,9 @@ node_border_color <- "black"
 edge_colors <- ifelse(nw$graph > 0, "red",
                       ifelse(nw$graph < 0, "blue", "gray"))
 
-# Define label font: 2 = bold, 1 = normal
+# Define label font
 label_font <- ifelse(formatted_labels %in% c("PSS", "GHQ"), 1, 2)
 
-
-# Plot the network (make sure this is after the pdf() call)
 plot(nw,
      layout = "spring",
      title = "",
@@ -560,4 +555,18 @@ plot(nw,
      border.width = node_border_width,
      border.color = node_border_color
 )
+```
+
+```{r sensitivity-analysis, echo=TRUE, message=FALSE, warning=FALSE, results='markup'}
+boot1 <- bootnet(nw, default = "ggmModSelect", nBoots = 1000, type = "nonparametric")
+
+plot(boot1, order = "sample", labels = FALSE)
+plot(boot1, "edge", plot = "difference")
+plot(boot1, "strength", plot = "difference")
+
+boot2 <- bootnet(nw, default = "ggmModSelect", nBoots = 1000, type = "case")
+
+plot(boot2, statistics = c("strength", "closeness", "betweenness"))
+corStability(boot2)
+plot(boot2, "strength", plot = "difference")
 ```
