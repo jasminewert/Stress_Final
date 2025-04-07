@@ -1,7 +1,7 @@
 ---
 title: "HMZ_final"
 author: "Jasmin Ewert"
-date: "2025-03-21"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
 output: html_document
 ---
 
@@ -38,7 +38,7 @@ Stress_Masterfile <- read_delim("Stress_Masterfile.csv",
                                 delim = ";", escape_double = FALSE, trim_ws = TRUE)
 ```
 
-### 2.2 NA Removal
+### 2.2 TOBIAS: Remove Empty Columns
 
 ```{r remove-na-rows, results='hide', message=FALSE, warning=FALSE}
 Stress_Masterfile <- Stress_Masterfile %>%
@@ -57,23 +57,17 @@ analyte_columns <- gsub(" ", "_", analyte_columns)
 ```
 
 ### 2.4 Keep Only Complete Bio_IDs
-
+TOBIAS: Code could be made simpler - We don't need to show the filtered ones // Also this is only Analytes, next is Psychometrics - either combine or specifiy the title -> If we need a flow chart, we should combine all of the IDs we exclude into a list (so we can use them for a flow chart)
 ```{r complete-bio-ids, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
-bio_ids_to_keep <- Stress_Masterfile %>%
-  group_by(Bio_ID) %>%
-  filter(if_all(all_of(analyte_columns), ~ !is.na(.))) %>%
-  pull(Bio_ID) %>%
-  unique()
-
 Stress_Masterfile_cleaned <- Stress_Masterfile %>%
-  filter(Bio_ID %in% bio_ids_to_keep)
-
-removed_bio_ids <- setdiff(unique(Stress_Masterfile$Bio_ID), bio_ids_to_keep)
-cat("Removed Bio_IDs due to missing analyte values:\n")
-print(removed_bio_ids)
+  group_by(Bio_ID) %>%
+  filter(across(all_of(analyte_columns), ~!is.na(.))) %>%
+  ungroup()
 ```
 
 ### 2.5 Filter for Participants with Both T0 and T1
+TOBIAS: Here we filter only for the GHQ, but noot the PSS, shoulnd't we do this for both?
+
 
 ```{r filter-t0-t1, echo=TRUE, message=FALSE, warning=FALSE, results='markup'}
 Stress_Masterfile_filtered <- Stress_Masterfile_cleaned %>%
@@ -112,6 +106,7 @@ delta_data <- Stress_Masterfile_filtered %>%
 ```
 
 ### 2.8 Filter Participants Missing Analytes (Neurofilament Light Polypeptide)
+TOBIAS: Shouldn't this be redunant - we excluded everyone with missing data before -if we get missing data here, then our delta calculation does not work properly
 
 ```{r filter-nfl, echo=TRUE, message=FALSE, warning=FALSE}
 delta_data_filtered <- delta_data %>%
@@ -125,7 +120,7 @@ delta_data_final <- delta_data_filtered
 ```
 
 ## 3. Outlier Removal
-
+TOBIAS: Here we def. wanna show the results in the output to make sure things are correct and include them in the supplement if needed
 ```{r outlier-removal, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 # Replace values > 2 SD from mean with NA
 remove_outliers_sd <- function(x) {
@@ -170,7 +165,7 @@ print(outlier_summary)
 ## 4. Extract and Prepare Covariates
 
 ### 4.1 Covariate Extraction
-
+TOBIAS: These variables should be ordinal - numeric handeling only for regression?
 ```{r prepare-covariates, echo=TRUE, message=FALSE, warning=FALSE}
 covariates <- Stress_Masterfile_filtered %>%
   filter(session == "T0") %>%
@@ -385,7 +380,7 @@ print(heatmap_plot)
 ```
 
 ## 8. Significant Results and Regression Plots
-
+TOBIAS: Regression: Plotting without outlier filtering, why?
 ```{r significant-results-inline, echo=TRUE, message=FALSE, warning=FALSE, results='markup', fig.width=6, fig.height=4}
 # Extract significant correlations 
 significant_results <- regression_summary_table %>%
@@ -469,6 +464,8 @@ for (i in 1:nrow(significant_results)) {
 
 
 ## 9. Network Analysis
+TOBIAS: Stability analyses indicate that we have very low power -> exclude meds.
+Why do you residulaize the data?
 
 ```{r network-analysis-estimate, echo=TRUE, message=FALSE, warning=FALSE, results='markup'}
 # Variables
@@ -556,17 +553,13 @@ plot(nw,
      border.color = node_border_color
 )
 ```
-
+TOBIAS: Title and documentation - show only output
 ```{r sensitivity-analysis, echo=TRUE, message=FALSE, warning=FALSE, results='markup'}
 boot1 <- bootnet(nw, default = "ggmModSelect", nBoots = 1000, type = "nonparametric")
 
 plot(boot1, order = "sample", labels = FALSE)
 plot(boot1, "edge", plot = "difference")
-plot(boot1, "strength", plot = "difference")
 
 boot2 <- bootnet(nw, default = "ggmModSelect", nBoots = 1000, type = "case")
-
-plot(boot2, statistics = c("strength", "closeness", "betweenness"))
 corStability(boot2)
-plot(boot2, "strength", plot = "difference")
 ```
