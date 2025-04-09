@@ -9,6 +9,12 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Categorical covariates
+## Change NW package (mgp)
+## Choose colors (heatmap, violin plots)
+## Repeat sensitivity analysis
+
+
 ## 1. Load Required Libraries
 
 ```{r load-libraries, echo=FALSE, message=FALSE, warning=FALSE}
@@ -38,7 +44,7 @@ Stress_Masterfile <- read_delim("Stress_Masterfile.csv",
                                 delim = ";", escape_double = FALSE, trim_ws = TRUE)
 ```
 
-### 2.2 TOBIAS: Remove Empty Columns
+### 2.2 Remove Empty Columns
 
 ```{r remove-na-rows, results='hide', message=FALSE, warning=FALSE}
 Stress_Masterfile <- Stress_Masterfile %>%
@@ -57,7 +63,12 @@ analyte_columns <- gsub(" ", "_", analyte_columns)
 ```
 
 ### 2.4 Keep Only Complete Bio_IDs
-TOBIAS: Code could be made simpler - We don't need to show the filtered ones // Also this is only Analytes, next is Psychometrics - either combine or specifiy the title -> If we need a flow chart, we should combine all of the IDs we exclude into a list (so we can use them for a flow chart)
+
+TOBIAS: Code could be made simpler - We don't need to show the filtered ones // Also this is only Analytes, next is Psychometrics - either combine or specifiy the title -> If we need a flow chart, we should combine all of the IDs we exclude into a list (so we 
+can use them for a flow chart)
+
+#### 2.4.1 Analyte Columns
+
 ```{r complete-bio-ids, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 Stress_Masterfile_cleaned <- Stress_Masterfile %>%
   group_by(Bio_ID) %>%
@@ -65,32 +76,33 @@ Stress_Masterfile_cleaned <- Stress_Masterfile %>%
   ungroup()
 ```
 
-### 2.5 Filter for Participants with Both T0 and T1
-TOBIAS: Here we filter only for the GHQ, but noot the PSS, shoulnd't we do this for both?
-
+### 2.4.2 Psychometric Ratings (GHQ and PSS)
 
 ```{r filter-t0-t1, echo=TRUE, message=FALSE, warning=FALSE, results='markup'}
 Stress_Masterfile_filtered <- Stress_Masterfile_cleaned %>%
   group_by(Bio_ID) %>%
-  filter(any(session == "T0" & !is.na(GHQ_total)) &
-         any(session == "T1" & !is.na(GHQ_total))) %>%
+  filter(
+    any(session == "T0" & !is.na(GHQ_total) & !is.na(PSS_Global_total)) &
+    any(session == "T1" & !is.na(GHQ_total) & !is.na(PSS_Global_total))
+  ) %>%
   ungroup()
 
-# Print number of participants with both T0 and T1
+# Print number of participants with both T0 and T1 GHQ + PSS
 num_participants <- Stress_Masterfile_filtered %>% 
   distinct(Bio_ID) %>% 
   nrow()
-cat("Number of participants with both T0 and T1:", num_participants, "\n")
+
+cat("Number of participants with both T0 and T1 GHQ + PSS:", num_participants, "\n")
 ```
 
-### 2.6 Recalculate BMI
+### 2.5 Recalculate BMI
 
 ```{r recalculate-bmi, include=FALSE}
 Stress_Masterfile_filtered <- Stress_Masterfile_filtered %>%
   mutate(BMI_T0_new = as.numeric(Weight_T0) / (as.numeric(Height_T0) / 100)^2)
 ```
 
-### 2.7 Calculate Delta Scores
+### 2.6 Calculate Delta Scores
 
 ```{r calculate-deltas, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
 delta_data <- Stress_Masterfile_filtered %>%
@@ -105,23 +117,14 @@ delta_data <- Stress_Masterfile_filtered %>%
   ungroup()
 ```
 
-### 2.8 Filter Participants Missing Analytes (Neurofilament Light Polypeptide)
-TOBIAS: Shouldn't this be redunant - we excluded everyone with missing data before -if we get missing data here, then our delta calculation does not work properly
-
-```{r filter-nfl, echo=TRUE, message=FALSE, warning=FALSE}
-delta_data_filtered <- delta_data %>%
-  filter(!is.na(Delta_Neurofilament_light_polypeptide))
-
-removed_bio_ids <- setdiff(delta_data$Bio_ID, delta_data_filtered$Bio_ID)
-cat("Removed Bio_IDs due to missing Delta_Neurofilament_light_polypeptide values:\n")
-print(removed_bio_ids)
-
-delta_data_final <- delta_data_filtered
-```
-
 ## 3. Outlier Removal
+
 TOBIAS: Here we def. wanna show the results in the output to make sure things are correct and include them in the supplement if needed
-```{r outlier-removal, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+
+```{r outlier-removal, echo=TRUE, message=FALSE, warning=FALSE, results='markup'}
+# Start with original data
+delta_data <- delta_data
+
 # Replace values > 2 SD from mean with NA
 remove_outliers_sd <- function(x) {
   if (all(is.na(x))) return(x)
@@ -132,23 +135,23 @@ remove_outliers_sd <- function(x) {
   return(x)
 }
 
-# Identify delta columns to clean
-delta_vars <- delta_data_final %>%
+# Identify delta variables
+delta_vars <- delta_data %>%
   select(starts_with("Delta_")) %>%
   colnames()
 
-# Store original for comparison
-delta_data_before <- delta_data_final
+# Keep a copy before cleaning
+delta_data_before <- delta_data
 
-# Replace outliers in-place
-delta_data_final <- delta_data_final %>%
+# Remove outliers → store result in delta_data_final
+delta_data_final <- delta_data %>%
   mutate(across(all_of(delta_vars), remove_outliers_sd))
 
-# Count participants
+# Count how many participants remain (should be the same unless entire rows became NA)
 cat("Number of participants after outlier handling:\n")
 print(nrow(delta_data_final))
 
-# Count outliers replaced per variable
+# Summarize how many outliers were removed per variable
 outlier_counts <- map_int(delta_vars, function(var) {
   sum(is.na(delta_data_final[[var]]) & !is.na(delta_data_before[[var]]))
 })
@@ -165,20 +168,24 @@ print(outlier_summary)
 ## 4. Extract and Prepare Covariates
 
 ### 4.1 Covariate Extraction
+
 TOBIAS: These variables should be ordinal - numeric handeling only for regression?
+
 ```{r prepare-covariates, echo=TRUE, message=FALSE, warning=FALSE}
+# Create covariate dataset with sex and smoking as factors
 covariates <- Stress_Masterfile_filtered %>%
   filter(session == "T0") %>%
-  dplyr::select(Bio_ID, age_T0, sex_T0, BMI_T0_new, smoke, meds) %>%
+  dplyr::select(Bio_ID, age_T0, sex_T0, BMI_T0_new, smoke) %>%
   mutate(
     age_T0 = as.numeric(age_T0),
-    sex_numeric = ifelse(sex_T0 == "male", 0, ifelse(sex_T0 == "female", 1, NA)),
-    smoke_numeric = ifelse(smoke == "yes", 1, ifelse(smoke == "no", 0, NA)),
-    meds_numeric = ifelse(meds == "yes", 1, ifelse(meds == "no", 0, NA))
+    sex_factor = factor(sex_T0, levels = c("male", "female")),
+    smoke_factor = factor(smoke, levels = c("no", "yes"))
   ) %>%
-  dplyr::select(Bio_ID, age_T0, sex_numeric, BMI_T0_new, smoke_numeric, meds_numeric)
+  dplyr::select(Bio_ID, age_T0, BMI_T0_new, sex_factor, smoke_factor)
 
+# Remove old versions (if present) before merging to avoid .x/.y suffixes
 delta_data_final <- delta_data_final %>%
+  select(-any_of(c("age_T0", "BMI_T0_new", "sex_factor", "smoke_factor"))) %>%
   left_join(covariates, by = "Bio_ID")
 ```
 
@@ -189,6 +196,114 @@ delta_data_final <- delta_data_final %>%
 #write.csv(delta_data, "delta_data.csv", row.names = FALSE)
 #write.csv(delta_data_filtered, "delta_data_filtered.csv", row.names = FALSE)
 #write.csv(delta_data_final, "delta_data_final.csv", row.names = FALSE)
+```
+
+### 5. Abbreviate Variable Names
+
+```{r abbreviations, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+# Create abbreviation map for analytes
+abbrev_map <- c(
+  "Delta_Neurofilament_light_polypeptide" = "NfL",
+  "Delta_Interleukin-12" = "IL-12",
+  "Delta_Interleukin-4" = "IL-4",
+  "Delta_Neutrophil_elastase" = "ELA2",
+  "Delta_Interleukin-10" = "IL-10",
+  "Delta_Protein_S100-A11" = "S100A11",
+  "Delta_Oncostatin-M" = "OSM",
+  "Delta_Transforming_growth_factor_beta-1" = "TGF-\u03b21",
+  "Delta_Thrombospondin-2" = "THBS2",
+  "Delta_Interferon_beta" = "IFN-\u03b2",
+  "Delta_Interferon_gamma" = "IFN-\u03b3",
+  "Delta_Serum_amyloid_A-1_protein" = "SAA1",
+  "Delta_Interferon_alpha-1/13" = "IFN-\u03b1",
+  "Delta_Serum_amyloid_A-2_protein" = "SAA2",
+  "Delta_Vascular_cell_adhesion_protein_1" = "VCAM-1",
+  "Delta_Glial_fibrillary_acidic_protein" = "GFAP",
+  "Delta_Neuropeptide_Y" = "NPY",
+  "Delta_FK506-binding_protein_5" = "FKBP5",
+  "Delta_Lipoprotein_lipase" = "LPL",
+  "Delta_NOS" = "NOS",
+  "Delta_Metalloproteinase_inhibitor_1" = "TIMP-1",
+  "Delta_Metalloproteinase_inhibitor_2" = "TIMP-2",
+  "Delta_C-C_motif_chemokine_7" = "CCL7",
+  "Delta_Gro-gamma" = "CXCL3",
+  "Delta_Brain-derived_neurotrophic_factor" = "BDNF",
+  "Delta_Metalloproteinase_inhibitor_3" = "TIMP-3",
+  "Delta_High_mobility_group_protein_B1" = "HMGB1",
+  "Delta_Interleukin-6" = "IL-6",
+  "Delta_Leptin" = "LEP",
+  "Delta_C-C_motif_chemokine_2" = "CCL2",
+  "Delta_Matrix_metalloproteinase-9" = "MMP-9",
+  "Delta_Myeloperoxidase" = "MPO",
+  "Delta_Vascular_endothelial_growth_factor_A" = "VEGF-A",
+  "Delta_Platelet_endothelial_cell_adhesion_molecule" = "PECAM-1",
+  "Delta_Platelet_factor_4" = "CXCL4",
+  "Delta_Complement_C3" = "C3",
+  "Delta_Stromelysin-1" = "MMP-3",
+  "Delta_Matrilysin" = "MMP-7",
+  "Delta_Neutrophil-activating_peptide_2" = "CXCL7",
+  "Delta_A_disintegrin_and_metalloproteinase_with_thrombospondin_motifs_4" = "ADAMTS4",
+  "Delta_C5a_anaphylatoxin" = "C5a",
+  "Delta_C-C_motif_chemokine_4" = "CCL4",
+  "Delta_Fibroblast_growth_factor_21" = "FGF21",
+  "Delta_Neutrophil_collagenase" = "MMP-8",
+  "Delta_C-X-C_motif_chemokine_5" = "CXCL5",
+  "Delta_Growth-regulated_alpha_protein" = "CXCL1",
+  "Delta_Fibroblast_growth_factor_2" = "FGF2",
+  "Delta_Interleukin-1_beta" = "IL-1\u03b2",
+  "Delta_C-C_motif_chemokine_3" = "CCL3",
+  "Delta_von_Willebrand_factor" = "vWF",
+  "Delta_Lipopolysaccharide-binding_protein" = "LBP",
+  "Delta_iNOS" = "iNOS",
+  "Delta_Gro-beta" = "CXCL2",
+  "Delta_Thyroid_Stimulating_Hormone" = "TSH",
+  "Delta_A_disintegrin_and_metalloproteinase_with_thrombospondin_motifs_5" = "ADAMTS5",
+  "Delta_A_disintegrin_and_metalloproteinase_with_thrombospondin_motifs_1" = "ADAMTS1",
+  "Delta_A_disintegrin_and_metalloproteinase_with_thrombospondin_motifs_13" = "ADAMTS13",
+  "Delta_COX-1" = "COX-1",
+  "Delta_NACHT,_LRR_and_PYD_domains-containing_protein_3" = "NLRP3",
+  "Delta_A_disintegrin_and_metalloproteinase_with_thrombospondin_motifs_9" = "ADAMTS9",
+  "Delta_Interleukin-8" = "IL-8",
+  "Delta_E-selectin" = "E-Selectin",
+  "Delta_C-X-C_motif_chemokine_6" = "CXCL6",
+  "Delta_Interleukin-17A" = "IL-17A",
+  "Delta_Transforming_growth_factor_beta-3" = "TGF-\u03b23",
+  "Delta_CD40_ligand" = "CD40L",
+  "Delta_A_disintegrin_and_metalloproteinase_with_thrombospondin_motifs_12" = "ADAMTS12",
+  "Delta_Apolipoprotein(a)" = "Apo(a)",
+  "Delta_Prostaglandin_G/H_synthase_2" = "PTGS2",
+  "Delta_Fibronectin" = "FN1",
+  "Delta_C-X-C_motif_chemokine_10" = "CXCL10",
+  "Delta_P-selectin" = "P-Selectin",
+  "Delta_Transforming_growth_factor_beta-2" = "TGF-\u03b22",
+  "Delta_72_kDa_type_IV_collagenase" = "MMP-2",
+  "Delta_C-reactive_protein" = "CRP",
+  "Delta_Complement_C4" = "C4",
+  "Delta_Macrophage_metalloelastase" = "MMP-12",
+  "Delta_Interleukin-1_alpha" = "IL-1\u03b1",
+  "Delta_Insulin" = "INS",
+  "Delta_Corticotropin" = "ACTH",
+  "Delta_Collagenase_3" = "MMP-13",
+  "Delta_Annexin_A1" = "ANXA1",
+  "Delta_Annexin_A2" = "ANXA2",
+  "Delta_Eotaxin" = "CCL11",
+  "Delta_C-C_motif_chemokine_5" = "CCL5",
+  "Delta_Interleukin-18" = "IL-18",
+  "Delta_Tumor_necrosis_factor" = "TNF",
+  "Delta_beta-nerve_growth_factor" = "\u03b2-NGF",
+  "Delta_Glial_cell_line-derived_neurotrophic_factor" = "GDNF",
+  "Delta_Ferritin" = "FTH1",
+  "Delta_Thrombopoietin" = "THPO",
+  "Delta_Metalloproteinase_inhibitor_4" = "TIMP-4",
+  "Delta_Appetite-regulating_hormone" = "Ghrelin",
+  "Delta_High_mobility_group_protein_B2" = "HMGB2",
+  "Delta_Insulin-like_growth_factor_I" = "IGF-I",
+  "Delta_Granulocyte_colony-stimulating_factor" = "G-CSF",
+  "Delta_Fibroblast_growth_factor_22" = "FGF22",
+  "Delta_Protein_S100-A4" = "S100A4",
+  "Delta_Indoleamine_2,3-dioxygenase_1" = "IDO-1",
+  "Delta_Tryptophan_2,3-dioxygenase" = "TDO"
+)
 ```
 
 ## 5. GHQ & PSS Violin Plots 
@@ -253,7 +368,7 @@ plot_violin <- function(df, measure) {
       legend.position = "none",
       plot.title = element_blank()
     ) +
-    scale_fill_manual(values = c("T0" = "#FF7070", "T1" = "#709BFF"), drop = FALSE)
+    scale_fill_manual(values = c("T0" = "#afea7b", "T1" = "#eab67b"), drop = FALSE)
 }
 
 # Plot
@@ -276,11 +391,16 @@ analyte_columns <- colnames(delta_data_final)[start_col:(start_col + 99)]
 # Function to run regression and return results
 run_regression <- function(dep_var, analyte_name) {
   regression_data <- delta_data_final %>%
-    dplyr::select(Bio_ID, all_of(dep_var), all_of(analyte_name), age_T0, BMI_T0_new, smoke_numeric, sex_numeric) %>%
-    rename(Dependent_Var = all_of(dep_var), Analyte = all_of(analyte_name), 
-           Age = age_T0, BMI = BMI_T0_new, Smoke = smoke_numeric, Sex = sex_numeric) %>%
+    dplyr::select(Bio_ID, all_of(dep_var), all_of(analyte_name), age_T0, BMI_T0_new, smoke_factor, sex_factor) %>%
+    rename(Dependent_Var = all_of(dep_var), 
+           Analyte = all_of(analyte_name), 
+           Age = age_T0, 
+           BMI = BMI_T0_new, 
+           Smoke = smoke_factor, 
+           Sex = sex_factor) %>%
     drop_na()
 
+  # Fit linear model with categorical covariates
   model <- lm(Dependent_Var ~ Analyte + Age + BMI + Smoke + Sex, data = regression_data)
   
   coef_value <- summary(model)$coefficients["Analyte", "Estimate"]
@@ -327,68 +447,81 @@ regression_summary_table <- bind_rows(
 colnames(regression_summary_table)[colnames(regression_summary_table) == "FDR_BH"] <- "FDR_P_Value"
 ```
 
-## 7. Heatmap of Regression Coefficients
+## 7. Heatmap
 
-```{r regression-heatmap, echo=TRUE message=FALSE, warning=FALSE, results='markup'}
-# Prepare and clean data for heatmap
+### 7.1 Data Preparation Heat Map
+
+```{r regression-heatmap, echo=TRUE, message=FALSE, warning=FALSE, results='markup'}
+# Apply abbreviations and prepare heatmap data
 heatmap_data <- regression_summary_table %>%
   dplyr::select(Analyte, Dependent_Variable, Coefficient, P_Value) %>%
   mutate(
+    # Apply significance labels
     Significance = case_when(
       P_Value < 0.001 ~ "***",
       P_Value < 0.01 ~ "**",
       P_Value < 0.05 ~ "*",
       TRUE ~ ""
     ),
-    Dependent_Variable = factor(Dependent_Variable, 
-                                levels = c("Delta_GHQ_total", "Delta_PSS_Global_total")),
-    # Clean analyte names
-    Analyte = gsub("Delta_", "", Analyte),
-    Analyte = gsub("_", " ", Analyte),
-    Analyte = gsub("\\.", " ", Analyte)
+    # Use abbreviations for Analytes
+    Analyte = ifelse(Analyte %in% names(abbrev_map),
+                     abbrev_map[Analyte],
+                     Analyte),
+    # Factor Dependent Variable
+    Dependent_Variable = factor(Dependent_Variable,
+                                levels = c("Delta_GHQ_total", "Delta_PSS_Global_total"))
   )
 
-# Sort analytes based on GHQ coefficient (after cleaning names)
+# Sort analytes based on GHQ effect size (after abbreviation)
 ghq_sorted <- heatmap_data %>%
   filter(Dependent_Variable == "Delta_GHQ_total") %>%
   arrange(desc(Coefficient)) %>%
   pull(Analyte) %>%
   unique()
 
-# Apply final formatting
+# Final formatting for plot
 heatmap_data <- heatmap_data %>%
   mutate(
-    Dependent_Variable = recode(Dependent_Variable, 
-                                "Delta_GHQ_total" = "GHQ", 
+    Dependent_Variable = recode(Dependent_Variable,
+                                "Delta_GHQ_total" = "GHQ",
                                 "Delta_PSS_Global_total" = "PSS"),
     Analyte = factor(Analyte, levels = ghq_sorted)
   )
 
-# Plot the heatmap
+```
+
+### 7.2 Plotting Heatmap
+
+```{r regression-heatmap-plot, echo=TRUE, message=FALSE, warning=FALSE, results='markup', fig.height=14, fig.width=9}
 heatmap_plot <- ggplot(heatmap_data, aes(x = Dependent_Variable, y = Analyte, fill = Coefficient)) +
   geom_tile(color = "white") +
-  scale_fill_gradient2(low = "#0014a8", mid = "#ebf5ff", high = "#e32636", midpoint = 0, name = "Regression Coefficient") +  
-  geom_text(aes(label = Significance), color = "black", size = 5, vjust = 0.75) +
-  labs(title = "Regression Coefficients Heatmap", x = "", y = "Analytes") +
+  scale_fill_gradient2(
+    low = "#0014a8", mid = "#ebf5ff", high = "#e32636",
+    midpoint = 0, name = "Regression Coefficient"
+  ) +  
+  geom_text(aes(label = Significance), color = "black", size = 4.5, vjust = 0.65, fontface = "bold", family = "sans") +
+  labs(title = "", x = "", y = "Analytes") +
   theme_minimal(base_size = 14) +
-  theme(axis.text.y = element_text(size = 7, face = "bold", vjust = 0.5),
-        axis.text.x = element_text(size = 14, face = "bold"),
-        plot.title = element_text(size = 18, face = "bold"))
+  theme(
+    text = element_text(family = "sans", face = "bold", color = "black"),
+    axis.text.y = element_text(size = 7.5, vjust = 0.5, color = "black"),
+    axis.text.x = element_text(size = 12, color = "black"),
+    plot.title = element_text(size = 18, color = "black"),
+    legend.title = element_text(size = 8, face = "bold", color = "black"),
+    legend.text = element_text(size = 9, color = "black")
+  )
 
-# display
+# Show plot
 print(heatmap_plot)
 ```
 
 ## 8. Significant Results and Regression Plots
-TOBIAS: Regression: Plotting without outlier filtering, why?
+
 ```{r significant-results-inline, echo=TRUE, message=FALSE, warning=FALSE, results='markup', fig.width=6, fig.height=4}
 # Extract significant correlations 
 significant_results <- regression_summary_table %>%
   filter(P_Value < 0.05) %>%
   mutate(
-    Analyte = gsub("Delta_", "", Analyte),
-    Analyte = gsub("_", " ", Analyte),
-    Analyte = gsub("\\.", " ", Analyte),
     Dependent_Variable = recode(
       Dependent_Variable,
       "Delta_GHQ_total" = "GHQ",
@@ -399,19 +532,20 @@ significant_results <- regression_summary_table %>%
       P_Value < 0.01 ~ "**",
       P_Value < 0.05 ~ "*",
       TRUE ~ ""
-    )
-  ) %>%
-  dplyr::select(Analyte, Dependent_Variable, Coefficient, P_Value, Significance)
+    ),
+    Analyte_Clean = Analyte,  # ✅ This line is now correct
+    Analyte_Label = ifelse(Analyte_Clean %in% names(abbrev_map),
+                           abbrev_map[Analyte_Clean],
+                           Analyte)
+  )
 
-# Clean analyte names to match delta_data_final
-significant_results <- significant_results %>%
-  mutate(Analyte_Clean = paste0("Delta_", gsub(" ", "_", Analyte)))
 
-# Plotting without outlier filtering
+# Plotting
 for (i in 1:nrow(significant_results)) {
 
   analyte_name <- significant_results$Analyte_Clean[i]
   dep_var <- significant_results$Dependent_Variable[i]
+  abbrev_label <- significant_results$Analyte_Label[i]
 
   # Check if the analyte exists in the data
   if (!(analyte_name %in% names(delta_data_final))) {
@@ -446,9 +580,9 @@ for (i in 1:nrow(significant_results)) {
     annotate("text", x = annotation_x, y = annotation_y, label = p_value_text,
              hjust = 1, vjust = 1, size = 6, fontface = "bold") +
     labs(
-      title = "",
-      x = bquote(.(significant_results$Analyte[i]) ~ "[" ~ Delta ~ T[1]-T[0] ~ "]"),
-      y = bquote(.(dep_var) ~ "Total Score [" ~ Delta ~ T[1]-T[0] ~ "]")
+      x = bquote(.(abbrev_label) ~ "[" ~ Delta ~ T[1]-T[0] ~ "]"),
+      y = bquote(.(dep_var) ~ "Total Score [" ~ Delta ~ T[1]-T[0] ~ "]"),
+      title = NULL
     ) +
     theme_minimal(base_size = 16) +
     theme(
@@ -462,82 +596,67 @@ for (i in 1:nrow(significant_results)) {
 }
 ```
 
-
 ## 9. Network Analysis
-TOBIAS: Stability analyses indicate that we have very low power -> exclude meds.
-Why do you residulaize the data?
+
+### 9.1 Network Analysis
+
+###### Oridnal Data -> Change sex & Smoking to categorical and then use mgm instead of ggModSelect for nw estimation
 
 ```{r network-analysis-estimate, echo=TRUE, message=FALSE, warning=FALSE, results='markup'}
-# Variables
+# Select analytes that showed significant correlation
 selected_analytes <- significant_results$Analyte_Clean
 network_vars <- c(selected_analytes, "Delta_GHQ_total", "Delta_PSS_Global_total")
-covariate_vars <- c("age_T0", "BMI_T0_new", "smoke_numeric", "sex_numeric")
+covariate_vars <- c("age_T0", "BMI_T0_new", "smoke_factor", "sex_factor")
+all_vars <- unique(c(network_vars, covariate_vars))
 
-# Extract data
-network_data <- delta_data_final[, names(delta_data_final) %in% network_vars]
-covariate_data <- delta_data_final[, names(delta_data_final) %in% covariate_vars]
+# Convert factors to integers before estimation (required for mgm)
+network_input_full <- delta_data_final[, names(delta_data_final) %in% all_vars] %>%
+  mutate(
+    sex_factor = as.integer(sex_factor),
+    smoke_factor = as.integer(smoke_factor)
+  )
 
-# Residualize each variable on covariates
-residualized_data <- network_data
-
-for (var in network_vars) {
-  formula <- as.formula(paste0("`", var, "` ~ ", paste(covariate_vars, collapse = " + ")))
-  
-  model_data <- delta_data_final[, c(var, covariate_vars)]
-  model <- lm(formula, data = model_data, na.action = na.exclude)
-  
-  # Keep full-length residuals
-  residualized_data[[var]] <- resid(model)
-}
-
-# Use residualized data directly 
-network_input <- residualized_data
-
-# Estimate network 
-nw <- estimateNetwork(network_input, default = "ggmModSelect")
-
-# Format labels
-raw_labels <- colnames(nw$graph)
-formatted_labels <- gsub("^Delta_", "", raw_labels)
-formatted_labels <- gsub("_", " ", formatted_labels)
-
-# Replace long names with abbreviations
-abbrev_map <- c(
-  "GHQ total" = "GHQ",
-  "PSS Global total" = "PSS",
-  "Interleukin-4" = "IL-4",
-  "Vascular cell adhesion protein 1" = "VCAM-1",
-  "Platelet factor 4" = "CXCL4",
-  "Neutrophil collagenase" = "MMP-8",
-  "Growth-regulated alpha protein" = "CXCL1",
-  "Lipopolysaccharide-binding protein" = "LBP",
-  "Gro-beta" = "CXCL2",
-  "A disintegrin and metalloproteinase with thrombospondin motifs 9" = "ADAMTS9",
-  "Interleukin-17A" = "IL-17A",
-  "CD40 ligand" = "CD40L",
-  "Prostaglandin G/H synthase 2" = "PTGS2",
-  "C-X-C motif chemokine 10" = "CXCL10",
-  "Annexin A2" = "ANXA2",
-  "Indoleamine 2,3-dioxygenase 1" = "IDO-1"
+# Estimate full network
+nw_full <- estimateNetwork(
+  network_input_full,
+  default = "mgm",
+  lambda = 0.1,
+  threshold = "none"
 )
 
-formatted_labels <- ifelse(formatted_labels %in% names(abbrev_map),
-                           abbrev_map[formatted_labels],
-                           formatted_labels)
+# Fix: Add dimnames so we can subset by name
+dimnames(nw_full$graph) <- list(colnames(network_input_full), colnames(network_input_full))
 
-# Define node colors 
+# Now subset the network to analytes + outcomes only
+nw <- nw_full
+nw$graph <- nw$graph[network_vars, network_vars]
+nw$labels <- nw$labels[network_vars]
+```
+
+### 9.2 Network Plotting
+
+```{r network-plotting, echo=TRUE, message=FALSE, warning=FALSE, results='markup', fig.height=4, fig.width=6}
+# Raw labels from graph (should match column names like "Delta_IL-6", "Delta_GHQ_total", etc.)
+raw_labels <- colnames(nw$graph)
+
+# Manually handle GHQ and PSS renaming first
+raw_labels <- recode(raw_labels,
+                     "Delta_GHQ_total" = "GHQ",
+                     "Delta_PSS_Global_total" = "PSS")
+
+# Then apply abbreviation map
+formatted_labels <- ifelse(raw_labels %in% names(abbrev_map),
+                           abbrev_map[raw_labels],
+                           raw_labels)
+# Aesthetics
 node_colors <- rep("lightblue", length(formatted_labels))
-node_size <- 10
+node_size <- 11
 node_border_width <- 2.5
 node_border_color <- "black"
+edge_colors <- ifelse(nw$graph > 0, "red", ifelse(nw$graph < 0, "blue", "gray"))
+label_font <- ifelse(formatted_labels %in% c("GHQ", "PSS"), 1, 2)
 
-# Edge color: red = positive, blue = negative
-edge_colors <- ifelse(nw$graph > 0, "red",
-                      ifelse(nw$graph < 0, "blue", "gray"))
-
-# Define label font
-label_font <- ifelse(formatted_labels %in% c("PSS", "GHQ"), 1, 2)
-
+# Plot network
 plot(nw,
      layout = "spring",
      title = "",
@@ -553,8 +672,12 @@ plot(nw,
      border.color = node_border_color
 )
 ```
+
+### 9.2 Stability Analysis
+
 TOBIAS: Title and documentation - show only output
-```{r sensitivity-analysis, echo=TRUE, message=FALSE, warning=FALSE, results='markup'}
+
+```{r sensitivity-analysis, echo=TRUE, message=FALSE, warning=FALSE, results='hold'}
 boot1 <- bootnet(nw, default = "ggmModSelect", nBoots = 1000, type = "nonparametric")
 
 plot(boot1, order = "sample", labels = FALSE)
